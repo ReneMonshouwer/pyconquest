@@ -1,0 +1,1 @@
+from .pyconquest import pyconquest
