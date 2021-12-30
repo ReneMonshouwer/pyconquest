@@ -21,12 +21,14 @@ be re-used.
 
 ## Examples
 
+note : use **loglevel='INFO'** (or 'ERROR' or 'DEBUG' ) to adjust printing of info/errors, default is 'ERROR'
+
 ### Rebuild database
 
 ```
 from pyconquest import pyconquest
 
-c=pyconquest()
+c=pyconquest(loglevel='INFO')
 c.create_standard_dicom_tables()
 nr_files=c.rebuild_database_from_dicom()
 ```
