@@ -47,12 +47,13 @@ data                              data_directory
 
 # Examples
 
+Note : use the argument *loglevel='INFO'* when creating the instance to get logging output
 ### (Re)create database and rebuild database
 
 ```
 from pyconquest import pyconquest
 
-c=pyconquest()
+c=pyconquest(loglevel='INFO')
 c.create_standard_dicom_tables()
 nr_files=c.rebuild_database_from_dicom()
 ```

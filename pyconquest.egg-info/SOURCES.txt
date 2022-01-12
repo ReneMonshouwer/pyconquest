@@ -1,0 +1,10 @@
+MANIFEST.in
+README.md
+setup.py
+pyconquest/__init__.py
+pyconquest/pyconquest.py
+pyconquest.egg-info/PKG-INFO
+pyconquest.egg-info/SOURCES.txt
+pyconquest.egg-info/dependency_links.txt
+pyconquest.egg-info/requires.txt
+pyconquest.egg-info/top_level.txt
