@@ -1,0 +1,136 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html><head><title>Python: class pyconquest</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+</head><body bgcolor="#f0f0f8">
+<p>
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="section">
+<tr bgcolor="#ffc8d8">
+<td colspan=3 valign=bottom>&nbsp;<br>
+<font color="#000000" face="helvetica, arial"><strong>pyconquest.pyconquest</strong> = <a name="pyconquest.pyconquest">class pyconquest</a>(<a href="builtins.html#object">builtins.object</a>)</font></td></tr>
+    
+<tr bgcolor="#ffc8d8"><td rowspan=2><tt>&nbsp;&nbsp;&nbsp;</tt></td>
+<td colspan=2><tt>Class&nbsp;&nbsp;ConquestDB&nbsp;is&nbsp;used&nbsp;to&nbsp;read&nbsp;and&nbsp;write&nbsp;(interact)&nbsp;with&nbsp;a&nbsp;conquest&nbsp;PACS&nbsp;database<br>
+&nbsp;<br>
+Written&nbsp;by&nbsp;René&nbsp;Monshouwer<br>
+2021<br>&nbsp;</tt></td></tr>
+<tr><td>&nbsp;</td>
+<td width="100%">Methods defined here:<br>
+<dl><dt><a name="pyconquest-__init__"><strong>__init__</strong></a>(self, data_directory='data', sql_inifile_name='dicom.sql', database_filename='conquest.db', connect_and_read_sql=True, loglevel='ERROR')</dt><dd><tt>Create&nbsp;instance&nbsp;of&nbsp;pyconquest&nbsp;to&nbsp;interact&nbsp;with&nbsp;the&nbsp;database<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;data_directory&nbsp;:&nbsp;name&nbsp;of&nbsp;directory&nbsp;where&nbsp;the&nbsp;dicom&nbsp;files&nbsp;are&nbsp;stored,&nbsp;DEFAULT&nbsp;:&nbsp;data<br>
+:param&nbsp;:&nbsp;sql_inifilename&nbsp;:&nbsp;name&nbsp;of&nbsp;the&nbsp;ini&nbsp;file&nbsp;where&nbsp;of&nbsp;database&nbsp;definition,&nbsp;DEFAULT&nbsp;:&nbsp;dicom.sql<br>
+:param&nbsp;:&nbsp;database_filename&nbsp;:&nbsp;filename&nbsp;of&nbsp;the&nbsp;sqllite&nbsp;databasefile&nbsp;:&nbsp;DEFAULT&nbsp;:&nbsp;conquest.db<br>
+:param&nbsp;:&nbsp;connect_and_read_sql&nbsp;:&nbsp;if&nbsp;True&nbsp;the&nbsp;database&nbsp;&nbsp;is&nbsp;opened&nbsp;and&nbsp;the&nbsp;sql&nbsp;ini&nbsp;file&nbsp;is&nbsp;read,&nbsp;DEFAULT&nbsp;:&nbsp;True<br>
+:param&nbsp;:&nbsp;loglevel&nbsp;:&nbsp;determines&nbsp;the&nbsp;loglevel,&nbsp;chooce&nbsp;from&nbsp;'ERROR',&nbsp;'INFO'&nbsp;or&nbsp;'DEBUG',&nbsp;DEFAULT&nbsp;:&nbsp;ERROR</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-add_column_to_database"><strong>add_column_to_database</strong></a>(self, tablename, column_definition)</dt><dd><tt>Add&nbsp;an&nbsp;individual&nbsp;column&nbsp;to&nbsp;the&nbsp;database,&nbsp;should&nbsp;be&nbsp;done&nbsp;before&nbsp;calling&nbsp;<a href="#pyconquest.pyconquest-create_standard_dicom_tables">create_standard_dicom_tables</a>()<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;tablename&nbsp;:&nbsp;name&nbsp;of&nbsp;the&nbsp;table&nbsp;to&nbsp;add&nbsp;the&nbsp;column&nbsp;to<br>
+:param&nbsp;:&nbsp;column_definition&nbsp;:&nbsp;definition&nbsp;of&nbsp;the&nbsp;column&nbsp;example&nbsp;:&nbsp;['0x0020',&nbsp;'0x000e',&nbsp;'SeriesInst']</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-close_db"><strong>close_db</strong></a>(self)</dt><dd><tt>Close&nbsp;connection&nbsp;to&nbsp;the&nbsp;sqlite&nbsp;database</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-connect_db"><strong>connect_db</strong></a>(self)</dt><dd><tt>Open&nbsp;connection&nbsp;to&nbsp;the&nbsp;sqlite&nbsp;database,&nbsp;database&nbsp;filename&nbsp;defined&nbsp;during&nbsp;instance&nbsp;creation</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-copy_dicom_files_to_dest"><strong>copy_dicom_files_to_dest</strong></a>(self, seriesuid=None, query=None, destination='', CreateDir=True, UseSubDirectories=False)</dt><dd><tt>Copies&nbsp;all&nbsp;dicom&nbsp;files&nbsp;belonging&nbsp;to&nbsp;a&nbsp;series&nbsp;to&nbsp;destination,&nbsp;described&nbsp;by&nbsp;either&nbsp;a&nbsp;seriesuid&nbsp;or&nbsp;a&nbsp;query.<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;serieuid&nbsp;:&nbsp;a&nbsp;single&nbsp;string&nbsp;(one&nbsp;seriesuid)&nbsp;or&nbsp;a&nbsp;list&nbsp;of&nbsp;seriesuids&nbsp;of&nbsp;series&nbsp;that&nbsp;should&nbsp;be&nbsp;copied<br>
+:param&nbsp;:&nbsp;query&nbsp;&nbsp;:&nbsp;should&nbsp;be&nbsp;a&nbsp;query&nbsp;for&nbsp;seriesuids,&nbsp;the&nbsp;query&nbsp;should&nbsp;return&nbsp;at&nbsp;least&nbsp;one&nbsp;column&nbsp;:&nbsp;SeriesInst<br>
+:param&nbsp;:&nbsp;CreateDir&nbsp;:&nbsp;determines&nbsp;of&nbsp;a&nbsp;directory&nbsp;is&nbsp;created&nbsp;if&nbsp;it&nbsp;does&nbsp;not&nbsp;exist&nbsp;(&nbsp;default&nbsp;=&nbsp;True)<br>
+:param&nbsp;:&nbsp;UseSubDirectories&nbsp;:&nbsp;determines&nbsp;if&nbsp;when&nbsp;storig&nbsp;subdirectories&nbsp;with&nbsp;the&nbsp;name&nbsp;PatientID&nbsp;are&nbsp;used&nbsp;(&nbsp;default=False)</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-create_buildquery"><strong>create_buildquery</strong></a>(self, table, mydict)</dt><dd><tt>Returns&nbsp;string&nbsp;with&nbsp;the&nbsp;format&nbsp;of&nbsp;an&nbsp;buildquery&nbsp;for&nbsp;sqlite&nbsp;to&nbsp;create&nbsp;a&nbsp;table&nbsp;with&nbsp;colnames&nbsp;as&nbsp;given<br>
+in&nbsp;the&nbsp;dict,&nbsp;all&nbsp;columns&nbsp;are&nbsp;formatted&nbsp;as&nbsp;'character&nbsp;varying(128)<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;table&nbsp;:&nbsp;name&nbsp;of&nbsp;the&nbsp;table&nbsp;to&nbsp;insert&nbsp;into<br>
+:param&nbsp;:&nbsp;myDict&nbsp;:&nbsp;a&nbsp;Dict&nbsp;with&nbsp;columname/value&nbsp;pairs&nbsp;to&nbsp;enter&nbsp;into&nbsp;the&nbsp;insertquery,&nbsp;values&nbsp;are&nbsp;ignored<br>
+:returns&nbsp;:&nbsp;string&nbsp;formatted&nbsp;as&nbsp;an&nbsp;table&nbsp;build&nbsp;query</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-create_insertquery"><strong>create_insertquery</strong></a>(self, table, myDict)</dt><dd><tt>Returns&nbsp;string&nbsp;with&nbsp;the&nbsp;format&nbsp;of&nbsp;an&nbsp;insertquery&nbsp;for&nbsp;sqlite&nbsp;to&nbsp;insert&nbsp;given&nbsp;dict&nbsp;in&nbsp;table&nbsp;called&nbsp;:&nbsp;table<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;table&nbsp;:&nbsp;name&nbsp;of&nbsp;the&nbsp;table&nbsp;to&nbsp;insert&nbsp;into<br>
+:param&nbsp;:&nbsp;myDict&nbsp;:&nbsp;a&nbsp;Dict&nbsp;with&nbsp;columname/value&nbsp;pairs&nbsp;to&nbsp;enter&nbsp;into&nbsp;the&nbsp;insertquery<br>
+:returns&nbsp;:&nbsp;string&nbsp;formatted&nbsp;as&nbsp;an&nbsp;insert&nbsp;query</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-create_standard_dicom_tables"><strong>create_standard_dicom_tables</strong></a>(self)</dt><dd><tt>Destroys&nbsp;(if&nbsp;necessary)&nbsp;and&nbsp;recreates&nbsp;empty&nbsp;tables&nbsp;according&nbsp;to&nbsp;the&nbsp;database&nbsp;definition&nbsp;of&nbsp;this&nbsp;instance</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-dicom_series_summary"><strong>dicom_series_summary</strong></a>(self, orderby='nrCT')</dt><dd><tt>Returns&nbsp;a&nbsp;summary&nbsp;of&nbsp;the&nbsp;database&nbsp;contents&nbsp;(&nbsp;number&nbsp;of&nbsp;elements&nbsp;)&nbsp;in&nbsp;the&nbsp;form&nbsp;of&nbsp;a&nbsp;list&nbsp;of&nbsp;dicts<br>
+to&nbsp;'pretty&nbsp;print'&nbsp;use&nbsp;:&nbsp;print(pd.DataFrame(c.<a href="#pyconquest.pyconquest-dicom_series_summary">dicom_series_summary</a>()))<br>
+&nbsp;<br>
+:param&nbsp;orderby&nbsp;:&nbsp;defines&nbsp;sorting&nbsp;order,&nbsp;give&nbsp;here&nbsp;the&nbsp;name&nbsp;of&nbsp;the&nbsp;column,&nbsp;is&nbsp;directly&nbsp;insterted&nbsp;in&nbsp;query<br>
+:type&nbsp;orderby&nbsp;:&nbsp;string</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-execute_db_query"><strong>execute_db_query</strong></a>(self, query)</dt><dd><tt>Executes&nbsp;sqlite&nbsp;query&nbsp;on&nbsp;the&nbsp;opened&nbsp;database,&nbsp;and&nbsp;returns&nbsp;the&nbsp;result<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;query&nbsp;:&nbsp;query&nbsp;to&nbsp;be&nbsp;exceuted&nbsp;on&nbsp;the&nbsp;sqlite&nbsp;database<br>
+:returns&nbsp;:&nbsp;query&nbsp;result&nbsp;in&nbsp;the&nbsp;form&nbsp;of&nbsp;al&nbsp;list&nbsp;of&nbsp;dicts</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-handle_dicom_store_request"><strong>handle_dicom_store_request</strong></a>(self, event)</dt><dd><tt>Handle&nbsp;a&nbsp;C-STORE&nbsp;request&nbsp;event.&nbsp;Creates&nbsp;filename&nbsp;and&nbsp;saves&nbsp;the&nbsp;received&nbsp;dicom&nbsp;to&nbsp;this&nbsp;file.&nbsp;Then&nbsp;updates<br>
+the&nbsp;database<br>
+&nbsp;<br>
+:param:&nbsp;event&nbsp;:&nbsp;event&nbsp;from&nbsp;the&nbsp;listener</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-rebuild_database_from_dicom"><strong>rebuild_database_from_dicom</strong></a>(self)</dt><dd><tt>Rebuild&nbsp;the&nbsp;sqlite&nbsp;database&nbsp;by&nbsp;scanning&nbsp;the&nbsp;dicom&nbsp;data&nbsp;directory<br>
+&nbsp;<br>
+:returns&nbsp;:&nbsp;number&nbsp;of&nbsp;scanned&nbsp;files</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-send_dicom"><strong>send_dicom</strong></a>(self, addres='127.0.0.1', port=5678, patientid='', seriesuid='', query='', ae_title=b'pyconquest')</dt><dd><tt>Sends&nbsp;dicom&nbsp;files&nbsp;via&nbsp;the&nbsp;dicom&nbsp;protocol&nbsp;to&nbsp;a&nbsp;(remote)&nbsp;destination,&nbsp;select&nbsp;on&nbsp;patientid,&nbsp;seriesuid&nbsp;or&nbsp;query<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;addres&nbsp;:&nbsp;IP&nbsp;address&nbsp;of&nbsp;the&nbsp;dicom&nbsp;destination&nbsp;(computer)<br>
+:param&nbsp;:&nbsp;port&nbsp;:&nbsp;port&nbsp;number&nbsp;of&nbsp;the&nbsp;dicom&nbsp;destination<br>
+:param&nbsp;:&nbsp;patientid&nbsp;:&nbsp;if&nbsp;given&nbsp;sends&nbsp;all&nbsp;files&nbsp;of&nbsp;this&nbsp;patient<br>
+:param&nbsp;:&nbsp;serieuid&nbsp;:&nbsp;if&nbsp;given&nbsp;sends&nbsp;all&nbsp;files&nbsp;of&nbsp;this&nbsp;seriesuid<br>
+:param&nbsp;:&nbsp;query&nbsp;:&nbsp;sends&nbsp;all&nbsp;files&nbsp;resulting&nbsp;from&nbsp;this&nbsp;query,&nbsp;should&nbsp;contain&nbsp;1&nbsp;column&nbsp;called&nbsp;SeriesInst&nbsp;with&nbsp;the&nbsp;seriesuid<br>
+:param&nbsp;:&nbsp;ae_title&nbsp;:&nbsp;AE&nbsp;title&nbsp;of&nbsp;destination&nbsp;(&nbsp;Default&nbsp;pyconquest&nbsp;)</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-send_dicom_file"><strong>send_dicom_file</strong></a>(self, addres, port, filename_list, aetitle=b'pyconquest')</dt><dd><tt>Send&nbsp;a&nbsp;dicom&nbsp;file&nbsp;via&nbsp;DICOM&nbsp;protocol&nbsp;to&nbsp;a&nbsp;destination<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;addres&nbsp;:&nbsp;IP&nbsp;address&nbsp;of&nbsp;the&nbsp;dicom&nbsp;destination&nbsp;(computer)<br>
+:param&nbsp;:&nbsp;port&nbsp;:&nbsp;port&nbsp;number&nbsp;of&nbsp;the&nbsp;dicom&nbsp;destination<br>
+:param&nbsp;:&nbsp;filename_list&nbsp;:&nbsp;either&nbsp;a&nbsp;single&nbsp;file&nbsp;or&nbsp;a&nbsp;list&nbsp;of&nbsp;filenames&nbsp;to&nbsp;send<br>
+:param&nbsp;:&nbsp;aetitle&nbsp;:&nbsp;AEtitle&nbsp;of&nbsp;destination&nbsp;(&nbsp;Default&nbsp;pyconquest&nbsp;)</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-start_dicom_listener"><strong>start_dicom_listener</strong></a>(self, port=5678)</dt><dd><tt>Starts&nbsp;a&nbsp;listener&nbsp;following&nbsp;the&nbsp;dicom&nbsp;network&nbsp;protocol.&nbsp;Default&nbsp;behaviour&nbsp;is&nbsp;to&nbsp;store&nbsp;the&nbsp;received&nbsp;file&nbsp;in&nbsp;the&nbsp;database<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;port&nbsp;:&nbsp;portnumber</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-store_dicom_file"><strong>store_dicom_file</strong></a>(self, filename, remove_after_store=False)</dt><dd><tt>Places&nbsp;dicom&nbsp;file&nbsp;in&nbsp;proper&nbsp;directory&nbsp;in&nbsp;data&nbsp;directory&nbsp;and&nbsp;updates&nbsp;database<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;filename&nbsp;:&nbsp;name&nbsp;of&nbsp;the&nbsp;dicom&nbsp;file&nbsp;to&nbsp;be&nbsp;placed&nbsp;in&nbsp;database<br>
+:param&nbsp;:&nbsp;remove_after_store&nbsp;:&nbsp;determines&nbsp;of&nbsp;file&nbsp;is&nbsp;deleted&nbsp;after&nbsp;storing&nbsp;it&nbsp;(&nbsp;default&nbsp;:&nbsp;FALSE&nbsp;)</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-store_dicom_files_from_directory"><strong>store_dicom_files_from_directory</strong></a>(self, directory_name, remove_after_store=False)</dt><dd><tt>Scans&nbsp;the&nbsp;directory&nbsp;and&nbsp;runs&nbsp;store_dicom_file&nbsp;on&nbsp;all&nbsp;files.<br>
+&nbsp;<br>
+Stores&nbsp;the&nbsp;file&nbsp;in&nbsp;the&nbsp;dicom&nbsp;file&nbsp;tree&nbsp;and&nbsp;updates&nbsp;the&nbsp;sql&nbsp;database&nbsp;with&nbsp;the&nbsp;tags&nbsp;for&nbsp;every&nbsp;file&nbsp;in&nbsp;directory<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;directory_name&nbsp;:&nbsp;name&nbsp;of&nbsp;the&nbsp;directory&nbsp;where&nbsp;the&nbsp;files&nbsp;are&nbsp;that&nbsp;should&nbsp;be&nbsp;stored<br>
+:param&nbsp;:&nbsp;remove_after_store&nbsp;:&nbsp;determines&nbsp;of&nbsp;file&nbsp;is&nbsp;deleted&nbsp;after&nbsp;storing&nbsp;it&nbsp;(&nbsp;default&nbsp;:&nbsp;FALSE&nbsp;)</tt></dd></dl>
+
+<dl><dt><a name="pyconquest-write_tags"><strong>write_tags</strong></a>(self, ds, filename='')</dt><dd><tt>Analyses&nbsp;the&nbsp;given&nbsp;already&nbsp;read&nbsp;in&nbsp;dicom&nbsp;tags,&nbsp;and&nbsp;inserts&nbsp;the&nbsp;appropriate&nbsp;data&nbsp;into&nbsp;the&nbsp;sqlitedatabase<br>
+&nbsp;<br>
+:param&nbsp;:&nbsp;ds&nbsp;:&nbsp;the&nbsp;dicom&nbsp;tags&nbsp;from&nbsp;the&nbsp;file,&nbsp;in&nbsp;the&nbsp;pydicom&nbsp;format<br>
+:param&nbsp;:&nbsp;filename&nbsp;:&nbsp;the&nbsp;filename&nbsp;of&nbsp;the&nbsp;file&nbsp;that&nbsp;was&nbsp;read&nbsp;(to&nbsp;insert&nbsp;into&nbsp;the&nbsp;DICOMimages.ObjectFile&nbsp;column)<br>
+&nbsp;<br>
+it&nbsp;checks&nbsp;before&nbsp;insert&nbsp;if&nbsp;the&nbsp;row&nbsp;already&nbsp;exists&nbsp;(based&nbsp;on&nbsp;the&nbsp;keyvalue&nbsp;of&nbsp;the&nbsp;row)&nbsp;if&nbsp;so,&nbsp;no&nbsp;re-insert&nbsp;is&nbsp;done.<br>
+Only&nbsp;for&nbsp;the&nbsp;DICOMimages&nbsp;table&nbsp;is&nbsp;Timestamp&nbsp;table&nbsp;is&nbsp;updated&nbsp;with&nbsp;the&nbsp;current&nbsp;time&nbsp;(&nbsp;time&nbsp;of&nbsp;the&nbsp;rewrite&nbsp;).</tt></dd></dl>
+
+<hr>
+Data descriptors defined here:<br>
+<dl><dt><strong>__dict__</strong></dt>
+<dd><tt>dictionary&nbsp;for&nbsp;instance&nbsp;variables&nbsp;(if&nbsp;defined)</tt></dd>
+</dl>
+<dl><dt><strong>__weakref__</strong></dt>
+<dd><tt>list&nbsp;of&nbsp;weak&nbsp;references&nbsp;to&nbsp;the&nbsp;object&nbsp;(if&nbsp;defined)</tt></dd>
+</dl>
+<hr>
+Data and other attributes defined here:<br>
+<dl><dt><strong>conn_pacs</strong> = ''</dl>
+
+<dl><dt><strong>data_directory</strong> = ''</dl>
+
+<dl><dt><strong>database_filename</strong> = ''</dl>
+
+<dl><dt><strong>sql_inifile_name</strong> = ''</dl>
+
+</td></tr></table>
+</body></html>
