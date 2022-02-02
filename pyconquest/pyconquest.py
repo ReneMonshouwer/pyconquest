@@ -8,6 +8,9 @@ import shutil
 from pynetdicom import AE, evt, AllStoragePresentationContexts, StoragePresentationContexts
 import time
 import pkg_resources
+import hashlib
+import pickle
+
 
 log = logging.getLogger(__name__)
 LOGFORMAT = "%(levelname)s %(asctime)s [%(filename)-15s:%(lineno)-4s][%(funcName)-30s]\t%(message)s"
@@ -26,12 +29,14 @@ class pyconquest:
                            'Patient': 'DICOMpatients',
                            'Study': 'DICOMstudies',
                            'WorkList': 'DICOMworklist'}
-    __extra_imagetable_columns = ['ObjectFile', 'ElementCount', 'ElementList', 'UniqueFOR_UID', 'DatabaseTimeStamp']
+    __extra_imagetable_columns = ['ObjectFile', 'ElementCount', 'ElementList', 'Nfractions',
+                                  'UniqueFOR_UID', 'DatabaseTimeStamp','hash']
     __prev_seriesuid = ''
     __prev_studyuid = ''
     __prev_patientid = ''
     __db_design = {}
     __truncate_colnames = True
+    __compute_hash = False
     try:
         __version__ = pkg_resources.get_distribution("pyconquest").version
     except:
@@ -40,9 +45,12 @@ class pyconquest:
     sql_inifile_name = ''
     database_filename = ''
     conn_pacs = ''
+    roi_filter_flags = re.IGNORECASE
+    exclude_filter = [r'^Z\d', r'^Ext', 'ISOC', 'QME', 'NP']
+    include_filter = ['']
 
     def __init__(self, data_directory='data', sql_inifile_name='dicom.sql', database_filename='conquest.db',
-                 connect_and_read_sql=True, loglevel='ERROR'):
+                 connect_and_read_sql=True, loglevel='ERROR', compute_hash=False):
         """Create instance of pyconquest to interact with the database
 
         :param : data_directory : name of directory where the dicom files are stored, DEFAULT : data
@@ -50,10 +58,12 @@ class pyconquest:
         :param : database_filename : filename of the sqllite databasefile : DEFAULT : conquest.db
         :param : connect_and_read_sql : if True the database  is opened and the sql ini file is read, DEFAULT : True
         :param : loglevel : determines the loglevel, chooce from 'ERROR', 'INFO' or 'DEBUG', DEFAULT : ERROR
+        :param : compute_hash : set to True to compute the hash for RTPLAN/RTDOSE/RTSTRUCT, DEFAULT : False
         """
         self.data_directory = data_directory
         self.sql_inifile_name = sql_inifile_name
         self.database_filename = database_filename
+        self.__compute_hash = compute_hash
 
         if loglevel == 'ERROR':
             log.level = logging.ERROR
@@ -63,8 +73,8 @@ class pyconquest:
             log.level = logging.INFO
 
         if connect_and_read_sql:
-            self.connect_db()
             self.__read_conquest_sql_inifile(self.sql_inifile_name)
+            self.connect_db()
         log.info("Created pyconquest({}) with dir:({}); db:({});ini:({}) "
                  .format(self.__version__, data_directory, database_filename, sql_inifile_name))
 
@@ -76,6 +86,11 @@ class pyconquest:
         """Open connection to the sqlite database, database filename defined during instance creation"""
         self.conn_pacs = sqlite3.connect(self.database_filename)
         log.info('Connected to ' + self.database_filename)
+        # if the database is new, so empty recreate the tables this can save a step and is logical
+        result = self.execute_db_query("SELECT name FROM sqlite_master WHERE type='table' AND name='DICOMseries' ")
+        if not result:
+            log.info('Creating tables because sqlite database is empty')
+            self.create_standard_dicom_tables()
 
     def close_db(self):
         """Close connection to the sqlite database"""
@@ -102,14 +117,42 @@ class pyconquest:
             log.error('exception ' + str(e) + '\nencountered in execution of db query: ' + query)
         return query_result
 
+    def insert_dict(self, tablename, datadict, exceptions={}, default_format='character varying(128)'):
+        """
+        Inserts a dict and creates a table if it not exists
+
+        :param tablename: name of table to store dict in
+        :param datadict: dict to store
+        :return: nothing
+        """
+        query = self.create_insertquery(tablename, datadict)
+        try:
+            cursor = self.conn_pacs.cursor()
+            cursor.execute(query)
+            self.conn_pacs.commit()
+        except Exception as e:
+            if str(e).startswith('no such table') == True:
+                log.info("Now creating table : {} to insert dict in".format(tablename))
+                buildquery = self.create_buildquery(tablename, datadict,
+                                                    exceptions=exceptions, default_format=default_format)
+                cursor = self.conn_pacs.cursor()
+                cursor.execute(buildquery)
+                self.conn_pacs.commit()
+                # now write anyway
+                cursor = self.conn_pacs.cursor()
+                cursor.execute(query)
+                self.conn_pacs.commit()
+            else:  # something else is wrong
+                log.error("Error {} when inserting dict {} into table {}".format(str(e), datadict, tablename))
+
     def __delete_table(self, tablename):
         """"Delete table with given name"""
         try:
             cur = self.conn_pacs.cursor()
-            cur.execute('DROP TABLE ' + tablename)
+            cur.execute('DROP TABLE IF EXISTS ' + tablename)
             self.conn_pacs.commit()
         except Exception as e:
-            log.error('failed to drop table : ' + tablename + ' probably already exists')
+            log.error('failed to drop table : ' + tablename )
 
     def __check_if_table_contains(self, tablename, colname, value):
         """Check if the table contains a certain row with specific value
@@ -138,20 +181,29 @@ class pyconquest:
 
         myDict = self.__convert_listvalues_to_conquest_style(myDict)
         columns_string = ('(' + ','.join(myDict.keys()) + ')').replace("-", "_")
-        values_string = '("' + '","'.join(map(str, myDict.values())) + '")'
+        values_string = ('("' + '","'.join(map(str, myDict.values())) + '")').replace("\'", " ")
         sql = """INSERT INTO %s %s VALUES %s""" % (table, columns_string, values_string)
         return sql
 
-    def create_buildquery(self, table, mydict):
+    def create_buildquery(self, table, mydict, exceptions={}, default_format='character varying(128)'):
         """Returns string with the format of an buildquery for sqlite to create a table with colnames as given
-                in the dict, all columns are formatted as 'character varying(128)
+                in the dict, default all columns are formatted as 'character varying(128)
 
-                :param : table : name of the table to insert into
-                :param : myDict : a Dict with columname/value pairs to enter into the insertquery, values are ignored
+                :param : table : name of the table to build
+                :param : myDict : a Dict with columname/value pairs to to create the buildquery, values are ignored
+                :param : exceptions : dictionary with exceptions : example : {'col1':'int'} makes col1 an int
+                :param : default_format : default type of column : DEFAULT : character varying(128)
                 :returns : string formatted as an table build query"""
-        columns_string = (' character varying(128),'.join(mydict.keys()) + ' character varying(128)').replace("-", "_")
-        sql = """CREATE TABLE %s (%s)
-                 """ % (table, columns_string)
+        #columns_string = (' character varying(128),'.join(mydict.keys()) + ' character varying(128)').replace("-", "_")
+        columns_string = ''
+        for b in mydict:
+            if b in exceptions:
+                fm = exceptions[b]
+            else:
+                fm = default_format
+            columns_string=columns_string+"{} {},".format(b, fm)
+
+        sql = """CREATE TABLE {} ({})""".format(table, columns_string[:-1].replace("-", "_"))
         return sql
 
     #
@@ -242,7 +294,7 @@ class pyconquest:
         if not self.__check_if_table_contains('DICOMimages', 'SOPInstanc', sopinstanceuid):
             imagedict = self.__create_tabledict('DICOMimages', ds)
             imagedict['ObjectFile'] = filename
-            imagedict.update(self.__extra_dicom_tags(ds))
+            imagedict.update(self.__extra_dicom_tags(ds, filename))
             query = self.create_insertquery('DICOMimages', imagedict)
             self.execute_db_query(query)
         else:
@@ -349,18 +401,23 @@ class pyconquest:
         :param : directory_name : name of the directory where the files are that should be stored
         :param : remove_after_store : determines of file is deleted after storing it ( default : FALSE )
          """
-        for root, dirs, files in os.walk(directory_name, topdown=True):
-            for name in files:
-                full_filename = os.path.join(root, name)
-                log.info('Processing ... ' + full_filename)
-                self.store_dicom_file(full_filename, remove_after_store=remove_after_store)
-        log.info('Processed {} files'.format(len(files)))
-        return 1
+        if  os.path.exists(directory_name):
+            for root, dirs, files in os.walk(directory_name, topdown=True):
+                for name in files:
+                    full_filename = os.path.join(root, name)
+                    log.info('Processing ... ' + full_filename)
+                    self.store_dicom_file(full_filename, remove_after_store=remove_after_store)
+            log.info('Processed {} files'.format(len(files)))
+            return 1
+        else:
+            log.error('Directory  : {} does not exist'.format(directory_name))
+            return -1
 
-    def __extra_dicom_tags(self, ds):
+    def __extra_dicom_tags(self, ds,filename):
         """Save some tags contained into the database
 
         :param : ds : dicom tags of a dicom file as read by pydicom.dcmread
+        :returns : a dict with extra parameters
         """
         returndict = {}
         returndict['DatabaseTimeStamp'] = time.time()
@@ -380,8 +437,103 @@ class pyconquest:
             else:
                 returndict['UniqueFOR_UID'] = ''
 
+            if self.__compute_hash:
+                #change the tags to make insensitive for anonimisation
+                ds.walk(self.__change_ReferencedSOPInstanceUID, recursive=True)
+                # hash only of contoursequence
+                returndict['hash'] = hashlib.md5(pickle.dumps(ds[0x3006, 0x0039].value)).hexdigest()
+
+        elif dicomtype == 'RTPLAN':
+            FractionGroupSequence = ds[0x300a, 0x0070].value
+            nr_fractions_list = []
+            nr_beams_list = []
+            for FractionGroup in FractionGroupSequence:
+                nr_fractions_list.append(FractionGroup[0x300a, 0x0078].value)
+                nr_beams_list.append(FractionGroup[0x300a, 0x0080].value)
+
+            #return only the value if there is only 1 FractionGroup, otherwise the list
+            if len(nr_fractions_list) == 1:
+                returndict['Nfractions'] = nr_fractions_list[0]
+            else:
+                returndict['Nfractions'] = nr_fractions_list
+
+            if len(nr_beams_list) == 1:
+                returndict['ElementCount'] = nr_beams_list[0]
+            else:
+                returndict['ElementCount'] = nr_beams_list
+
+            # RTPLAN has only the hash of the beam sequence
+            if self.__compute_hash:
+                returndict['hash'] = hashlib.md5(pickle.dumps(ds[0x300a, 0x00b0].value)).hexdigest()
+
+        elif dicomtype == 'RTDOSE' and self.__compute_hash:
+            returndict['hash'] = hashlib.md5(pickle.dumps(ds.PixelData)).hexdigest()
+
         return returndict
 
+
+    def __change_ReferencedSOPInstanceUID(self,ds,element):
+        if element.keyword == 'ReferencedSOPInstanceUID':
+            ds.ReferencedSOPInstanceUID = ''
+
+    def delete_series(self,seriesuid, delete_files=False):
+        """Deletes a single or multiple series from the disk and from the database
+
+        :param : seriesuid : a single string (one seriesuid) or a list of seriesuids of series that should be deleted
+        :returns : nothing
+        """
+        
+        if isinstance(seriesuid, list): #recursive call in case of list as input
+            for suid in seriesuid:
+                self.delete_series(seriesuid=suid, delete_files=delete_files)
+            return
+        # single seriesuid given
+        else:
+            file_query = "select ObjectFile,ImagePat,dicomseries.StudyInsta from dicomimages \
+                            inner join dicomseries on (dicomseries.SeriesInst = dicomimages.seriesinst) \
+                            where dicomimages.seriesinst==\"{}\"".format(seriesuid)
+
+            return_list = self.execute_db_query(file_query)
+            if(len(return_list) == 0):
+                log.info('no images found for this seriesuid : '+seriesuid)
+                return
+
+            for row in return_list:
+                studyuid = row['StudyInsta']
+                patientid = row['ImagePat']
+                filename = "{}/{}".format(self.data_directory, row['ObjectFile'])
+                if os.path.exists(filename):
+                    if delete_files:
+                        os.remove(filename)
+                        log.info('deleting ' + filename)
+                    else:
+                        log.info('not deleting file, only DB entries,  since delete_files=False'.format(filename))
+                else:
+                    log.error("The file you want to delete does not exist")
+
+                #delete dicomimage table entry
+                query='delete from dicomimages where ObjectFile="{}"'.format(row['ObjectFile'])
+                self.execute_db_query(query)
+
+
+            #delete dicomseries table entry
+            query='delete from dicomseries where seriesinst="{}"'.format(seriesuid)
+            self.execute_db_query(query)
+
+            #now delete the study entry in db if this is the last ...
+            query_for_remaining_series='select count(*) as nr from dicomseries where studyinsta="{}"'.format(studyuid)
+            remaining_series = self.execute_db_query(query_for_remaining_series)
+            if remaining_series[0]['nr'] == 0:
+                query = 'delete from dicomstudies where StudyInsta="{}"'.format(studyuid)
+                self.execute_db_query(query)
+                log.info('no more series : now deleting studiuid entry in db : {}'.format(studyuid))
+
+            query_for_remaining_studies = 'select count(*) as nr from dicomstudies where PatientID={}'.format(patientid)
+            remaining_studies = self.execute_db_query(query_for_remaining_studies)
+            if remaining_studies[0]['nr'] == 0:
+                query = 'delete from dicompatients where PatientID="{}"'.format(patientid)
+                self.execute_db_query(query)
+                log.info('no more studies : now deleting patient db entry with number : {}'.format(patientid))
     #
     #   Some utility routines not part of base functionality of conquest, but handy
     #
@@ -458,7 +610,6 @@ class pyconquest:
             query = 'Select ObjectFile from DICOMimages where seriesinst=\'{}\''.format(seriesuid)
         elif not query == '':
             series_list = self.execute_db_query(query=query)
-            print(series_list)
             log.info('Now sending using query: {}'.format(query))
             for it in series_list:
                 ser=it['SeriesInst']
@@ -584,6 +735,48 @@ class pyconquest:
                 " from dicompatients order by {}".format(orderby)
         result = self.execute_db_query(query)
         return result
+    # some utility functions that are handy to have in the base class
+
+
+    def set_roi_filter(self, exclude=[''], include=[''],roi_filter_flags=re.IGNORECASE):
+        """sets the exclude and include filters for the roi names
+
+        :param : exclude : list of strings, each describing and exclusion
+        :param : include : list of strings, describe the rois to include, '' is : include all
+        :param : roi_filter_flags : flags for the re module
+
+        exclude is run before include filter
+        """
+        self.exclude_filter = exclude
+        self.include_filter = include
+        self.roi_filter_flags = roi_filter_flags
+        log.info('Filtervalues :  include: {} ; exclude {} ; flags : {}'.format(self.include_filter,self.exclude_filter,str(self.roi_filter_flags)))
+
+    def filter_roinames(self, roinames ):
+        """Drops all roinames in the list exclude_patterns, then only includes the ones in list include_patterns
+        use the set_roifilter method to set the filter parameters
+
+        Parameters:
+            roinames: list of roinames to filter
+            flags : flags to regexp, default is IGNORECASE
+
+        Return:
+            filtered list of roinames
+        """
+        returnlist = []
+        # the if statement is because when the pattern is empty string, everything is matched in re
+        if self.exclude_filter[0] is not '':
+            for pattern in self.exclude_filter:
+                p = re.compile(pattern, self.roi_filter_flags)
+                roinames = [roiname for roiname in roinames if not p.match(roiname)]
+
+        for pattern in self.include_filter:
+            p = re.compile(pattern, self.roi_filter_flags)
+            for roiname in roinames:
+                if p.match(roiname):
+                    returnlist.append(roiname)
+
+        return returnlist
 
     def __set_default_database(self):
         log.info('Using default database layout,specify .sql file during instance creation to change this')

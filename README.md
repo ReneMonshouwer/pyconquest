@@ -79,8 +79,8 @@ c.dicom_series_summary()
 ```
 
 
-## Adding files to the database
-#### Adding a single file specified by name (optionally remove original)
+## Adding and delting files to the database
+### Adding a single file specified by name (optionally remove original)
 ```
 from pyconquest import pyconquest
 
@@ -88,13 +88,22 @@ c=pyconquest()
 c.store_dicom_file('1.2.840.113704.1.111....931a31.dcm')
 c.store_dicom_file('1.2.840.113704.1.111....931a31.dcm', remove_after_store=True)
 ```
-#### to enter all dicom files in a directory into the database
+### Enter all dicom files in a directory into the database
 ````
 from pyconquest import pyconquest
 
 c=pyconquest()
 c.store_dicom_files_from_directory('input_directory_name')
 c.store_dicom_files_from_directory('input_directory_name', remove_after_store=True)
+````
+
+### Deleting series or list of series from the database (optionally 'real' deletion of the file)
+````
+c.delete_series('2.16.840.1.11....152.20190524082318.537836')
+c.delete_series(['2.16..7836','1.2.666...55'])
+
+# Really pyhsically remove the files (otherwise only the DB entries)
+c.delete_series('2.16.840.1.11....152.20190524082318.537836', delete_files=True)
 ````
 
 ## Sending and receiving files via dicom connectivity
@@ -167,3 +176,18 @@ the .sql files are compatible with the original Conquest file format
 python setup.py sdist
 twine upload dist/*
 ```
+
+# CHANGELOG
+
+### version 0.0.4
+- Added function **insert_dict** to class to easily insert your own data in the database. Also takes care of creating the
+table when the first dict is inserted
+- If a database has no tables, tables are created automatically on db opening (so on instance creation)
+- In **create_buildquery**, now columns can be defined with formats deviating from default and the default can be defined
+- Number of  fractions and number of beams saved from RTPLAN to database columns 
+- For RTDOSE, RTPLAN and RTSTRUCT file hashes are calculated and saved in dicomseries table
+- Added **delete_series** function to delete the series from database and optionally delete the .dcm files
+- Added **filter_roinames()** and **set_roi_filter()** methods to facilitate filtering of roi name lists for child classes
+### version 0.0.3
+- Improved documentation and docstrings
+- uniformity in calling send and copy routines
