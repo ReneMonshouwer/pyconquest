@@ -4,3 +4,4 @@ pynetdicom==1.5.7
 python-dateutil==2.8.2
 SimpleITK==2.1.1
 pandas==1.1.5
+scikit-image==0.19.1

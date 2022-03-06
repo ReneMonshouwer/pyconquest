@@ -64,6 +64,19 @@ from pyconquest import pyconquest
 c=pyconquest()
 c.dicom_series_summary()
 ```
+
+### More advanced querying and extraction from the database:
+```
+from pyconquest import pyconquest
+
+c=pyconquest()
+
+# extract python list type of selected seriesuids 
+query='select * from dicomseries where modality='CT'
+list_of_seriesuid=c.execute_db_query(query,return_list_from_col='SeriesInst')
+for seriesuid in list_of_seriesuid:
+  print(seriesuid)
+```
 ### Using non standard names and directories
 ```
 from pyconquest import pyconquest
@@ -99,10 +112,12 @@ c.store_dicom_files_from_directory('input_directory_name', remove_after_store=Tr
 
 ### Deleting series or list of series from the database (optionally 'real' deletion of the file)
 ````
-c.delete_series('2.16.840.1.11....152.20190524082318.537836')
-c.delete_series(['2.16..7836','1.2.666...55'])
+c.delete_series(seriesuid='2.16.840.1.11....152.20190524082318.537836')
+c.delete_series(seriesuid=['2.16..7836','1.2.666...55'])
+#or by query
+c.delete_series(query='select * from dicomseries where modality="CT"')
 
-# Really pyhsically remove the files (otherwise only the DB entries)
+# Really pyhsically remove the files (otherwise only the DB entries are removed)
 c.delete_series('2.16.840.1.11....152.20190524082318.537836', delete_files=True)
 ````
 
@@ -115,7 +130,7 @@ from pyconquest import pyconquest
 
 c=pyconquest()
 c.connect_db()
-c.send_dicom(addres='127.0.0.1',port=5678,patientid='1234567')
+c.send_dicom(addres='127.0.0.1', port=5678, patientid='1234567', ae_title=b'destinationAE',  sending_ae_title=b'MY_AE_TITLE')
 c.send_dicom(seriesuid='2.16.840.1.113669.2.931128.880152.20190524082318.537836')
 
 RTPLAN_query="select seriesinst from dicomseries where modality=\'RTPLAN\'"
@@ -179,13 +194,22 @@ twine upload dist/*
 
 # CHANGELOG
 
+### version 0.0.5
+- a view (**v_series**) is added to the sqlite database that joins study,series and image table
+- delete_series can now handle query to define the series to delete
+- series argument of delete_series changed from positional to named
+- added option to rebuild database for a single mrn  (mrn='1234567')
+- added option sending_ae_title to send_dicom() and send_dicom_file()
+- bugfix in name of file in store_dicom (wrong path was used)
+- execute_db_query now has an option to return (only) a list of a single column
+
 ### version 0.0.4
 - Added function **insert_dict** to class to easily insert your own data in the database. Also takes care of creating the
 table when the first dict is inserted
 - If a database has no tables, tables are created automatically on db opening (so on instance creation)
 - In **create_buildquery**, now columns can be defined with formats deviating from default and the default can be defined
 - Number of  fractions and number of beams saved from RTPLAN to database columns 
-- For RTDOSE, RTPLAN and RTSTRUCT file hashes are calculated and saved in dicomseries table
+- For RTDOSE, RTPLAN and RTSTRUCT file hashes are calculated and saved in dicomimage table
 - Added **delete_series** function to delete the series from database and optionally delete the .dcm files
 - Added **filter_roinames()** and **set_roi_filter()** methods to facilitate filtering of roi name lists for child classes
 ### version 0.0.3

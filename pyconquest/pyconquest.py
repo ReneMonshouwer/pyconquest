@@ -97,10 +97,11 @@ class pyconquest:
         self.conn_pacs.close()
         log.info('Closed connection to ' + self.database_filename)
 
-    def execute_db_query(self, query):
+    def execute_db_query(self, query, return_list_from_col=None):
         """Executes sqlite query on the opened database, and returns the result
 
         :param : query : query to be exceuted on the sqlite database
+        :param : return_list_form_co : when set a list is returned of this columnname
         :returns : query result in the form of al list of dicts
         """
         query_result = None
@@ -115,7 +116,12 @@ class pyconquest:
             log.debug('Result: ' + str(query_result))
         except Exception as e:
             log.error('exception ' + str(e) + '\nencountered in execution of db query: ' + query)
-        return query_result
+
+        if return_list_from_col is None:
+            return query_result
+        else:
+            result = [row[return_list_from_col] for row in query_result]
+            return result
 
     def insert_dict(self, tablename, datadict, exceptions={}, default_format='character varying(128)'):
         """
@@ -347,12 +353,17 @@ class pyconquest:
             self.__delete_table(tablename)
             self.execute_db_query(query)
 
-    def rebuild_database_from_dicom(self):
+        self.__create_db_views()
+
+    def rebuild_database_from_dicom(self, mrn=None):
         """Rebuild the sqlite database by scanning the dicom data directory
 
          :returns : number of scanned files
          """
-        directory = self.data_directory
+        if mrn is None:
+            directory = self.data_directory
+        else:
+            directory = '{}/{}'.format(self.data_directory,mrn)
 
         counter = 0
         for root, dirs, files in os.walk(directory, topdown=True):
@@ -362,7 +373,7 @@ class pyconquest:
                 try:
                     counter = counter + 1
                     ds = dcmread(full_filename)
-                    self.write_tags(ds, full_filename[len(directory) + 1:])
+                    self.write_tags(ds, full_filename[len(self.data_directory) + 1:])
                 except Exception as e:
                     log.error(str(e))
         return counter
@@ -378,6 +389,7 @@ class pyconquest:
             patientid = ds[0x0010, 0x0020].value
 
             target_filename = "{}/{}/{}".format(self.data_directory, patientid, os.path.basename(filename))
+            target_filename_db = "{}/{}".format(patientid, os.path.basename(filename))
             path = "{}/{}".format(self.data_directory, patientid)
             if not os.path.exists(path):
                 os.makedirs(path)
@@ -388,7 +400,7 @@ class pyconquest:
             if remove_after_store:
                 os.remove(filename)
                 log.info('removed file : {}'.format(filename))
-            self.write_tags(ds, target_filename)
+            self.write_tags(ds, target_filename_db)
 
         except Exception as e:
             log.error('Exception encountered in store_dicom_file: ' + str(e))
@@ -476,17 +488,24 @@ class pyconquest:
         if element.keyword == 'ReferencedSOPInstanceUID':
             ds.ReferencedSOPInstanceUID = ''
 
-    def delete_series(self,seriesuid, delete_files=False):
+    def delete_series(self, seriesuid='', query=None, delete_files=False):
         """Deletes a single or multiple series from the disk and from the database
 
         :param : seriesuid : a single string (one seriesuid) or a list of seriesuids of series that should be deleted
         :returns : nothing
         """
-        
+        if query is not None:
+            log.info('deleting series following query: {}'.format(query))
+            result = self.execute_db_query(query)
+            serieslist = [d['SeriesInst'] for d in result]
+            self.delete_series(seriesuid=serieslist, delete_files=delete_files)
+            return()
+
         if isinstance(seriesuid, list): #recursive call in case of list as input
             for suid in seriesuid:
                 self.delete_series(seriesuid=suid, delete_files=delete_files)
-            return
+            return()
+
         # single seriesuid given
         else:
             file_query = "select ObjectFile,ImagePat,dicomseries.StudyInsta from dicomimages \
@@ -528,7 +547,7 @@ class pyconquest:
                 self.execute_db_query(query)
                 log.info('no more series : now deleting studiuid entry in db : {}'.format(studyuid))
 
-            query_for_remaining_studies = 'select count(*) as nr from dicomstudies where PatientID={}'.format(patientid)
+            query_for_remaining_studies = 'select count(*) as nr from dicomstudies where PatientID="{}"'.format(patientid)
             remaining_studies = self.execute_db_query(query_for_remaining_studies)
             if remaining_studies[0]['nr'] == 0:
                 query = 'delete from dicompatients where PatientID="{}"'.format(patientid)
@@ -593,7 +612,8 @@ class pyconquest:
     #   Below is the dicom communication part using pynetdicom
     #
 
-    def send_dicom(self, addres='127.0.0.1',port=5678, patientid='', seriesuid='',query='', ae_title=b'pyconquest'):
+    def send_dicom(self, addres='127.0.0.1',port=5678, patientid='', seriesuid='',query='', ae_title=b'pyconquest',
+                   sending_ae_title=b'PYNETDICOM'):
         """Sends dicom files via the dicom protocol to a (remote) destination, select on patientid, seriesuid or query
 
         :param : addres : IP address of the dicom destination (computer)
@@ -613,7 +633,8 @@ class pyconquest:
             log.info('Now sending using query: {}'.format(query))
             for it in series_list:
                 ser=it['SeriesInst']
-                self.send_dicom(addres=addres, port=port, seriesuid=ser, ae_title=ae_title)
+                self.send_dicom(addres=addres, port=port, seriesuid=ser, ae_title=ae_title,
+                                sending_ae_title=sending_ae_title)
             return
 
         # query for filenames and fill list of fienames
@@ -621,9 +642,9 @@ class pyconquest:
         for line in result:
             filename_list.append(self.data_directory + '\\' + line['ObjectFile'])
 
-        self.send_dicom_file(addres, port, filename_list, aetitle=ae_title)
+        self.send_dicom_file(addres, port, filename_list, aetitle=ae_title, sending_ae_title=sending_ae_title)
 
-    def send_dicom_file(self, addres, port, filename_list, aetitle=b'pyconquest'):
+    def send_dicom_file(self, addres, port, filename_list, aetitle=b'pyconquest', sending_ae_title=b'PYNETDICOM'):
         """Send a dicom file via DICOM protocol to a destination
 
         :param : addres : IP address of the dicom destination (computer)
@@ -632,7 +653,7 @@ class pyconquest:
         :param : aetitle : AEtitle of destination ( Default pyconquest )
         """
         # Initialise the Application Entity
-        ae = AE()
+        ae = AE(ae_title=sending_ae_title)
 
         # Add a requested presentation context
         ae.requested_contexts = StoragePresentationContexts
@@ -741,12 +762,18 @@ class pyconquest:
     def set_roi_filter(self, exclude=[''], include=[''],roi_filter_flags=re.IGNORECASE):
         """sets the exclude and include filters for the roi names
 
-        :param : exclude : list of strings, each describing and exclusion
-        :param : include : list of strings, describe the rois to include, '' is : include all
-        :param : roi_filter_flags : flags for the re module
+        :param : exclude : string or list of strings, each describing and exclusion
+        :param : include : string or list of strings, describe the rois to include, '' is : include all
+        :param : roi_filter_flags : flags for the re module, DEFAULT : re.IGNORECASE, set flags=0 to clear flags
 
         exclude is run before include filter
         """
+        # if only a string is given, put it in a list
+        if isinstance(exclude, str):
+            exclude=[exclude]
+        if isinstance(include, str):
+            include = [include]
+
         self.exclude_filter = exclude
         self.include_filter = include
         self.roi_filter_flags = roi_filter_flags
@@ -777,6 +804,21 @@ class pyconquest:
                     returnlist.append(roiname)
 
         return returnlist
+
+    def __create_db_views(self):
+        v_series = '''
+            create view v_series as
+            select dicomseries.*,dicomstudies.*,dicomimages.* 
+            from DICOMseries
+            inner join dicomstudies on dicomseries.StudyInsta=dicomstudies.StudyInsta
+            inner join dicomimages on dicomimages.seriesinst=dicomseries.seriesinst and dicomimages.SOPInstanc=(
+            select di.SOPInstanc from dicomimages as di where di.seriesinst=dicomimages.seriesinst order by 
+            SliceLocat,SOPInstanc LIMIT 1)   
+        '''
+        self.execute_db_query('DROP VIEW IF EXISTS v_series')
+        self.execute_db_query(v_series)
+        log.info('Created view : v_series')
+        return 1
 
     def __set_default_database(self):
         log.info('Using default database layout,specify .sql file during instance creation to change this')
