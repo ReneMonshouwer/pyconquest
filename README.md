@@ -56,6 +56,10 @@ from pyconquest import pyconquest
 c=pyconquest(loglevel='INFO')
 c.create_standard_dicom_tables()
 nr_files=c.rebuild_database_from_dicom()
+# only rebuild a single MRN/patient
+c.rebuild_database_from_dicom(mrn='1234567')
+# build for every MRN, even if the MRN already exists in Database
+c.rebuild_database_from_dicom(compute_only_missing=False)
 ```
 ### Basic database summary
 ```
@@ -194,6 +198,13 @@ twine upload dist/*
 
 # CHANGELOG
 
+### version 0.0.6
+- **Rebuild_database_from_dicom()** now has option to rebuild only missing directories
+- When closing the database, the time elapsed is printed
+- Referenced seriesuid is now extracted from RTSTRUCT and placed in dicomseries and dicomimages table
+- **Dicom_series_summary()** now prints result directly to stdout, so no need for pandas to make a readable table
+- The view **v_series** now only combines series and study table (previous version was too slow due to complexity)
+- New view : **v_seriesRT** now combines series,study and image tables for only RT dicom objects (so not for images)
 ### version 0.0.5
 - a view (**v_series**) is added to the sqlite database that joins study,series and image table
 - delete_series can now handle query to define the series to delete

@@ -9,7 +9,7 @@ c=pyconquest(sql_inifile_name='dicom.sql',loglevel='INFO', compute_hash=True)
 c.add_column_to_database(tablename='DICOMpatients',column_definition=['0x0020', '0x000d', 'StudyInst'])
 c.create_standard_dicom_tables()
 start = time.time()
-nr_files=c.rebuild_database_from_dicom()
+nr_files=c.rebuild_database_from_dicom('1234567', compute_only_missing=False)
 end = time.time()
 print('numer of files: {}; should be 13'.format(nr_files))
 print('time elapsed : '+ str(end-start) + ' seconds ; ms per file : '+ str( 1000*(end-start)/nr_files))
@@ -57,7 +57,7 @@ print('\nTESTING OF DELETE SERIES FUNCTIONALITY')
 print(pd.DataFrame(c.execute_db_query('select seriesinst from dicomimages')))
 
 #delete single series
-c.delete_series('2.16.840.1.113669.2.931128.880152.20190524082318.537836')
+c.delete_series(seriesuid='2.16.840.1.113669.2.931128.880152.20190524082318.537836')
 all_series = ['2.16.840.1.113669.2.931128.880152.20190524082318.537836',
                  '2.16.840.1.113669.2.931128.880152.20190524082317.937233',
                  '1.2.840.113704.1.111.7700.1448024597.12',
@@ -65,7 +65,7 @@ all_series = ['2.16.840.1.113669.2.931128.880152.20190524082318.537836',
                  '2.16.840.1.113669.2.931128.880152.20190524095038.429446']
 
 #delete all, if you do this, all tables should be empty ( inc dicompatients)
-#c.delete_series(all_series)
+# c.delete_series(seriesuid=all_series)
 
 print(pd.DataFrame(c.execute_db_query('select sopinstanc from dicomimages')))
 
@@ -78,5 +78,13 @@ c.set_roi_filter(include=['PTV'],exclude=[''],roi_filter_flags=re.IGNORECASE)
 print('after filtering PTV in (include) there should only be ptv : '+str(c.filter_roinames(['ex','lung','ptv'])))
 c.set_roi_filter(include=['PTV'],exclude=[''],roi_filter_flags=0)
 print('after filtering PTV in (include) without ignorease there should only be only PTV not ptv : '+str(c.filter_roinames(['ex','PTV','ptv'])))
+c.set_roi_filter(include='PTV',exclude=[''],roi_filter_flags=0)
+print('after filtering PTV in (include) without ignorease there should only be only PTV not ptv : '+str(c.filter_roinames(['ex','PTV','ptv'])))
+
+c.delete_series(query='select * from dicomseries where modality="CT"')
+
+lst = c.execute_db_query('select * from dicomseries', return_list_from_col='SeriesInst')
+print('should be list of 3 uids : '+str(lst))
+
 
 c.close_db()

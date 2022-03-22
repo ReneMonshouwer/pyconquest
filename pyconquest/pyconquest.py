@@ -6,10 +6,10 @@ import os.path
 import re
 import shutil
 from pynetdicom import AE, evt, AllStoragePresentationContexts, StoragePresentationContexts
-import time
 import pkg_resources
 import hashlib
 import pickle
+import time
 
 
 log = logging.getLogger(__name__)
@@ -30,13 +30,14 @@ class pyconquest:
                            'Study': 'DICOMstudies',
                            'WorkList': 'DICOMworklist'}
     __extra_imagetable_columns = ['ObjectFile', 'ElementCount', 'ElementList', 'Nfractions',
-                                  'UniqueFOR_UID', 'DatabaseTimeStamp','hash']
+                                  'UniqueFOR_UID', 'ReferencedSeriesUID', 'DatabaseTimeStamp', 'hash']
     __prev_seriesuid = ''
     __prev_studyuid = ''
     __prev_patientid = ''
     __db_design = {}
     __truncate_colnames = True
     __compute_hash = False
+    __instance_creation_time = ''
     try:
         __version__ = pkg_resources.get_distribution("pyconquest").version
     except:
@@ -64,6 +65,7 @@ class pyconquest:
         self.sql_inifile_name = sql_inifile_name
         self.database_filename = database_filename
         self.__compute_hash = compute_hash
+        self.__instance_creation_time = time.time()
 
         if loglevel == 'ERROR':
             log.level = logging.ERROR
@@ -96,6 +98,8 @@ class pyconquest:
         """Close connection to the sqlite database"""
         self.conn_pacs.close()
         log.info('Closed connection to ' + self.database_filename)
+        timediff = time.time() - self.__instance_creation_time
+        log.info('Time elapsed : {:.1f} seconds ({:.2f} min)'.format(float(timediff), float(timediff/60.0)))
 
     def execute_db_query(self, query, return_list_from_col=None):
         """Executes sqlite query on the opened database, and returns the result
@@ -317,6 +321,8 @@ class pyconquest:
                 # if a unique FOR_UID was extracted from RTSTRUCT, add to series table also
                 if 'UniqueFOR_UID' in imagedict:
                     seriesdict['FrameOfRef'] = imagedict['UniqueFOR_UID']
+                if 'ReferencedSeriesUID' in imagedict:
+                    seriesdict['Referenced'] = imagedict['ReferencedSeriesUID']
                 query = self.create_insertquery('DICOMseries', seriesdict)
                 self.execute_db_query(query)
 
@@ -355,25 +361,37 @@ class pyconquest:
 
         self.__create_db_views()
 
-    def rebuild_database_from_dicom(self, mrn=None):
+    def rebuild_database_from_dicom(self, mrn=None, compute_only_missing=True):
         """Rebuild the sqlite database by scanning the dicom data directory
 
-         :returns : number of scanned files
+        :param : mrn : if given, only the data from that directory / patient MRN is put in the database
+
+        :param : ComputeOnlyMissing : if True a directory/MRN is only processed if there is NO entry in the database with that number
+            default : True
+        :returns : number of scanned files
          """
         if mrn is None:
             directory = self.data_directory
         else:
             directory = '{}/{}'.format(self.data_directory,mrn)
 
+        already_present = self.execute_db_query(query='select PatientID from dicompatients',
+                                              return_list_from_col='PatientID')
         counter = 0
+        string_startingpoint = len(self.data_directory) + 1
         for root, dirs, files in os.walk(directory, topdown=True):
+            mrn = root[len(self.data_directory)+1:]
+            if (mrn in already_present) and (compute_only_missing is True):
+                log.info('Skipping Directory, PatientID already in database: '+str(mrn))
+                continue
+
             for name in files:
                 full_filename = os.path.join(root, name)
                 log.info('Processing ... ' + full_filename)
                 try:
                     counter = counter + 1
                     ds = dcmread(full_filename)
-                    self.write_tags(ds, full_filename[len(self.data_directory) + 1:])
+                    self.write_tags(ds, full_filename[string_startingpoint:])
                 except Exception as e:
                     log.error(str(e))
         return counter
@@ -454,6 +472,12 @@ class pyconquest:
                 ds.walk(self.__change_ReferencedSOPInstanceUID, recursive=True)
                 # hash only of contoursequence
                 returndict['hash'] = hashlib.md5(pickle.dumps(ds[0x3006, 0x0039].value)).hexdigest()
+
+            try:
+                referenced_seriesuid = ds[0x3006, 0x0010][0][0x3006, 0x0012][0][0x3006, 0x0014][0][0x0020, 0x000e].value
+                returndict['ReferencedSeriesUID'] = referenced_seriesuid
+            except:
+                log.error('Error when extracting referenced_seriesuid')
 
         elif dicomtype == 'RTPLAN':
             FractionGroupSequence = ds[0x300a, 0x0070].value
@@ -738,12 +762,14 @@ class pyconquest:
     # examine database
     #
 
-    def dicom_series_summary(self, orderby='nrCT'):
+    def dicom_series_summary(self, orderby='nrCT', print_summary=True):
         """Returns a summary of the database contents ( number of elements ) in the form of a list of dicts
-        to 'pretty print' use : print(pd.DataFrame(c.dicom_series_summary()))
+        if print_summary is True, the result is printed to stdout
+        alternatively : to 'pretty print' use : print(pd.DataFrame(c.dicom_series_summary()))
 
         :param orderby : defines sorting order, give here the name of the column, is directly insterted in query
         :type orderby : string
+        :param print_summary : if True (default) the summary is printed
         """
 
         query = "select distinct patientid " \
@@ -755,6 +781,21 @@ class pyconquest:
                 ",(select count(*) from dicomseries where seriespat=patientid and modality=\'RTPLAN\') as nrRTPLAN" \
                 " from dicompatients order by {}".format(orderby)
         result = self.execute_db_query(query)
+
+        if print_summary:
+            print('  PatientID    nrCT nrMR  nrPT nrRTSTRUCT nrRTDOSE nrRTPLAN')
+            rowcount=0
+            for r in result:
+                rowcount=rowcount+1
+                print('{}{}{}{}{}{}{}{}'.format(str(rowcount).ljust(3),
+                    r['PatientID'].ljust(14),
+                    str(r['nrCT']).ljust(5),
+                    str(r['nrMR']).ljust(5),
+                    str(r['nrPT']).ljust(8),
+                    str(r['nrRTSTRUCT']).ljust(10),
+                    str(r['nrRTDOSE']).ljust(10),
+                    str(r['nrRTPLAN']).ljust(8)))
+
         return result
     # some utility functions that are handy to have in the base class
 
@@ -792,7 +833,7 @@ class pyconquest:
         """
         returnlist = []
         # the if statement is because when the pattern is empty string, everything is matched in re
-        if self.exclude_filter[0] is not '':
+        if self.exclude_filter[0] != '':
             for pattern in self.exclude_filter:
                 p = re.compile(pattern, self.roi_filter_flags)
                 roinames = [roiname for roiname in roinames if not p.match(roiname)]
@@ -808,16 +849,24 @@ class pyconquest:
     def __create_db_views(self):
         v_series = '''
             create view v_series as
+            select dicomseries.*,dicomstudies.*
+            from DICOMseries
+            inner join dicomstudies on dicomseries.StudyInsta=dicomstudies.StudyInsta
+        '''
+        v_seriesRT = '''
+            create view v_seriesRT as
             select dicomseries.*,dicomstudies.*,dicomimages.* 
             from DICOMseries
             inner join dicomstudies on dicomseries.StudyInsta=dicomstudies.StudyInsta
-            inner join dicomimages on dicomimages.seriesinst=dicomseries.seriesinst and dicomimages.SOPInstanc=(
-            select di.SOPInstanc from dicomimages as di where di.seriesinst=dicomimages.seriesinst order by 
-            SliceLocat,SOPInstanc LIMIT 1)   
+            inner join dicomimages on dicomimages.seriesinst=dicomseries.seriesinst 
+            where DICOMseries.modality in ('RTSTRUCT','RTDOSE','RTPLAN')
         '''
+
         self.execute_db_query('DROP VIEW IF EXISTS v_series')
         self.execute_db_query(v_series)
-        log.info('Created view : v_series')
+        self.execute_db_query('DROP VIEW IF EXISTS v_seriesRT')
+        self.execute_db_query(v_seriesRT)
+        log.info('Created views : v_series and v_seriesRT')
         return 1
 
     def __set_default_database(self):
