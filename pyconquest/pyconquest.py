@@ -291,17 +291,24 @@ class pyconquest:
             tabledict[item[2].replace('\"', '')] = val
         return tabledict
 
-    def write_tags(self, ds, filename=''):
+    def write_tags(self, ds, filename='', check_existing=True):
         """Analyses the given already read in dicom tags, and inserts the appropriate data into the sqlitedatabase
+        it optionally checks before insert if the row already exists (based on the keyvalue of the row) if so, no re-insert is done.
+        Only for the DICOMimages table is Timestamp table is updated with the current time ( time of the rewrite ).
+        For large databases and initial rebuild, use check_existing=False to speed up
 
         :param : ds : the dicom tags from the file, in the pydicom format
         :param : filename : the filename of the file that was read (to insert into the DICOMimages.ObjectFile column)
-
-        it checks before insert if the row already exists (based on the keyvalue of the row) if so, no re-insert is done.
-        Only for the DICOMimages table is Timestamp table is updated with the current time ( time of the rewrite ).
+        :param : check_existing : if True, a check is done before inserting the row into the table, default TRUE
         """
         sopinstanceuid = ds['0x0008', '0x0018'].value
-        if not self.__check_if_table_contains('DICOMimages', 'SOPInstanc', sopinstanceuid):
+
+        if check_existing:
+            row_exists = self.__check_if_table_contains('DICOMimages', 'SOPInstanc', sopinstanceuid)
+        else:
+            row_exists = False
+
+        if not row_exists:
             imagedict = self.__create_tabledict('DICOMimages', ds)
             imagedict['ObjectFile'] = filename
             imagedict.update(self.__extra_dicom_tags(ds, filename))
@@ -360,14 +367,16 @@ class pyconquest:
             self.execute_db_query(query)
 
         self.__create_db_views()
+        self.__create_db_index_tables()
 
-    def rebuild_database_from_dicom(self, mrn=None, compute_only_missing=True):
+    def rebuild_database_from_dicom(self, mrn=None, compute_only_missing=True, check_existing=True):
         """Rebuild the sqlite database by scanning the dicom data directory
 
         :param : mrn : if given, only the data from that directory / patient MRN is put in the database
-
-        :param : ComputeOnlyMissing : if True a directory/MRN is only processed if there is NO entry in the database with that number
-            default : True
+        :param : ComputeOnlyMissing : if True a directory/MRN is only processed if there is NO entry in the database
+         with that number default : True
+        :param check_existing : if True, a check is done when inserting rows in the db. put to False to speed up
+            initial database rebuilding
         :returns : number of scanned files
          """
         if mrn is None:
@@ -391,7 +400,7 @@ class pyconquest:
                 try:
                     counter = counter + 1
                     ds = dcmread(full_filename)
-                    self.write_tags(ds, full_filename[string_startingpoint:])
+                    self.write_tags(ds, full_filename[string_startingpoint:], check_existing=check_existing)
                 except Exception as e:
                     log.error(str(e))
         return counter
@@ -512,12 +521,28 @@ class pyconquest:
         if element.keyword == 'ReferencedSOPInstanceUID':
             ds.ReferencedSOPInstanceUID = ''
 
-    def delete_series(self, seriesuid='', query=None, delete_files=False):
+    def delete_series(self, seriesuid='', query=None, delete_files=False, mrn=None):
         """Deletes a single or multiple series from the disk and from the database
 
         :param : seriesuid : a single string (one seriesuid) or a list of seriesuids of series that should be deleted
+        :param : query : a query that should return SeriesInst with the series to delete
+        :param : delete_files : if set to True, the files are physically removed from disk (deleted), default=False
+        :param : mrn : delete for the given mrn in a fast manner, so only all the database entries with a direct query
         :returns : nothing
         """
+        if mrn is not None:
+            if delete_files == True:
+                log.error('Cannot delete on mrn and physically delete the files')
+                return(-1)
+            else:
+                self.execute_db_query(query='delete from dicomimages where imagepat="{}"'.format(mrn))
+                self.execute_db_query(query='delete from dicomseries where seriespat="{}"'.format(mrn))
+                self.execute_db_query(query='delete from dicomstudies where PatientID="{}"'.format(mrn))
+                self.execute_db_query(query='delete from dicompatients where PatientID="{}"'.format(mrn))
+
+                log.info('Deleted all database entries for patient {} from the database tables'.format(mrn))
+                return(1)
+
         if query is not None:
             log.info('deleting series following query: {}'.format(query))
             result = self.execute_db_query(query)
@@ -868,6 +893,17 @@ class pyconquest:
         self.execute_db_query(v_seriesRT)
         log.info('Created views : v_series and v_seriesRT')
         return 1
+
+    def __create_db_index_tables(self):
+        """Creates database index tables to speed up queries"""
+
+        index_dicomimages = \
+            'CREATE INDEX IF NOT EXISTS "index_dicomimages" ON "DICOMimages" ("SOPInstanc")'
+        index_dicomseries = \
+            'CREATE INDEX IF NOT EXISTS "index_dicomseries" ON "DICOMseries" ("SeriesInst")'
+        self.execute_db_query(index_dicomimages)
+        self.execute_db_query(index_dicomseries)
+        log.info('Created index_dicomimages and index_dicomseries')
 
     def __set_default_database(self):
         log.info('Using default database layout,specify .sql file during instance creation to change this')
