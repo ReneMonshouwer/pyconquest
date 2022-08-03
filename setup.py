@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="pyconquest",                     # This is the name of the package
-    version="0.0.7",                        # The  release version
+    version="0.1.1",                        # The  release version
     author="René Monshouwer",                     # Full name of the author
     author_email="rene.monshouwer@radboudumc.nl",
     description="Python code which partly mimics the conquest pacs",

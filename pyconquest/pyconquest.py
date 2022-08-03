@@ -10,13 +10,22 @@ import pkg_resources
 import hashlib
 import pickle
 import time
-
+import csv
+import sys
+from logging.handlers import RotatingFileHandler
 
 log = logging.getLogger(__name__)
 LOGFORMAT = "%(levelname)s %(asctime)s [%(filename)-15s:%(lineno)-4s][%(funcName)-30s]\t%(message)s"
-LOGFORMAT_console = "[%(funcName)-25s]\t%(message).40s ..."
-logging.basicConfig(level=logging.ERROR, format=LOGFORMAT, datefmt='%H:%M:%S')
+log.setLevel(logging.ERROR)
 
+ch = logging.StreamHandler(sys.stderr)
+ch.setFormatter(logging.Formatter(LOGFORMAT))
+log.addHandler(ch)
+
+fh = RotatingFileHandler("pyconquest_error.log", maxBytes=(100000), backupCount=1)
+fh.setFormatter(logging.Formatter(LOGFORMAT))
+fh.setLevel(logging.ERROR)
+log.addHandler(fh)
 
 class pyconquest:
     """Class  ConquestDB is used to read and write (interact) with a conquest PACS database
@@ -30,13 +39,14 @@ class pyconquest:
                            'Study': 'DICOMstudies',
                            'WorkList': 'DICOMworklist'}
     __extra_imagetable_columns = ['ObjectFile', 'ElementCount', 'ElementList', 'Nfractions',
-                                  'UniqueFOR_UID', 'ReferencedSeriesUID', 'DatabaseTimeStamp', 'hash']
+                                  'UniqueFOR_UID', 'ReferencedSeriesUID', 'ReferencedSOPUID','DatabaseTimeStamp', 'hash']
     __prev_seriesuid = ''
     __prev_studyuid = ''
     __prev_patientid = ''
     __db_design = {}
     __truncate_colnames = True
     __compute_hash = False
+    __write_to_database_when_receiving_dicom_data = True
     __instance_creation_time = ''
     try:
         __version__ = pkg_resources.get_distribution("pyconquest").version
@@ -54,12 +64,12 @@ class pyconquest:
                  connect_and_read_sql=True, loglevel='ERROR', compute_hash=False):
         """Create instance of pyconquest to interact with the database
 
-        :param : data_directory : name of directory where the dicom files are stored, DEFAULT : data
-        :param : sql_inifilename : name of the ini file where of database definition, DEFAULT : dicom.sql
-        :param : database_filename : filename of the sqllite databasefile : DEFAULT : conquest.db
-        :param : connect_and_read_sql : if True the database  is opened and the sql ini file is read, DEFAULT : True
-        :param : loglevel : determines the loglevel, chooce from 'ERROR', 'INFO' or 'DEBUG', DEFAULT : ERROR
-        :param : compute_hash : set to True to compute the hash for RTPLAN/RTDOSE/RTSTRUCT, DEFAULT : False
+        :param: data_directory : name of directory where the dicom files are stored, DEFAULT : data
+        :param: sql_inifilename : name of the ini file where of database definition, DEFAULT : dicom.sql
+        :param: database_filename : filename of the sqllite databasefile : DEFAULT : conquest.db
+        :param: connect_and_read_sql : if True the database  is opened and the sql ini file is read, DEFAULT : True
+        :param: loglevel : determines the loglevel, chooce from 'ERROR', 'INFO' or 'DEBUG', DEFAULT : ERROR
+        :param: compute_hash : set to True to compute the hash for RTPLAN/RTDOSE/RTSTRUCT, DEFAULT : False
         """
         self.data_directory = data_directory
         self.sql_inifile_name = sql_inifile_name
@@ -104,9 +114,9 @@ class pyconquest:
     def execute_db_query(self, query, return_list_from_col=None):
         """Executes sqlite query on the opened database, and returns the result
 
-        :param : query : query to be exceuted on the sqlite database
-        :param : return_list_form_co : when set a list is returned of this columnname
-        :returns : query result in the form of al list of dicts
+        :param: query : query to be exceuted on the sqlite database
+        :param: return_list_form_co : when set a list is returned of this columnname
+        :returns: query result in the form of al list of dicts
         """
         query_result = None
         try:
@@ -131,8 +141,8 @@ class pyconquest:
         """
         Inserts a dict and creates a table if it not exists
 
-        :param tablename: name of table to store dict in
-        :param datadict: dict to store
+        :param: tablename: name of table to store dict in
+        :param: datadict: dict to store
         :return: nothing
         """
         query = self.create_insertquery(tablename, datadict)
@@ -167,11 +177,11 @@ class pyconquest:
     def __check_if_table_contains(self, tablename, colname, value):
         """Check if the table contains a certain row with specific value
 
-        :param : tablename : name of the table
-        :param : colname : name of the column of the value to be tested
-        :param : value : value to test
+        :param: tablename : name of the table
+        :param: colname : name of the column of the value to be tested
+        :param: value : value to test
 
-        :returns : True or False depending on whether the row already exists"""
+        :returns: True or False depending on whether the row already exists"""
 
         cur = self.conn_pacs.cursor()
         query = 'SELECT * FROM ' + tablename + ' WHERE ' + colname + ' = \"' + value.strip() + '\"'
@@ -185,9 +195,9 @@ class pyconquest:
     def create_insertquery(self, table, myDict):
         """Returns string with the format of an insertquery for sqlite to insert given dict in table called : table
 
-        :param : table : name of the table to insert into
-        :param : myDict : a Dict with columname/value pairs to enter into the insertquery
-        :returns : string formatted as an insert query"""
+        :param: table : name of the table to insert into
+        :param: myDict : a Dict with columname/value pairs to enter into the insertquery
+        :returns: string formatted as an insert query"""
 
         myDict = self.__convert_listvalues_to_conquest_style(myDict)
         columns_string = ('(' + ','.join(myDict.keys()) + ')').replace("-", "_")
@@ -199,11 +209,11 @@ class pyconquest:
         """Returns string with the format of an buildquery for sqlite to create a table with colnames as given
                 in the dict, default all columns are formatted as 'character varying(128)
 
-                :param : table : name of the table to build
-                :param : myDict : a Dict with columname/value pairs to to create the buildquery, values are ignored
-                :param : exceptions : dictionary with exceptions : example : {'col1':'int'} makes col1 an int
-                :param : default_format : default type of column : DEFAULT : character varying(128)
-                :returns : string formatted as an table build query"""
+                :param: table : name of the table to build
+                :param: myDict : a Dict with columname/value pairs to to create the buildquery, values are ignored
+                :param: exceptions : dictionary with exceptions : example : {'col1':'int'} makes col1 an int
+                :param: default_format : default type of column : DEFAULT : character varying(128)
+                :returns: string formatted as an table build query"""
         #columns_string = (' character varying(128),'.join(mydict.keys()) + ' character varying(128)').replace("-", "_")
         columns_string = ''
         for b in mydict:
@@ -232,8 +242,8 @@ class pyconquest:
     def add_column_to_database(self, tablename, column_definition):
         """ Add an individual column to the database, should be done before calling create_standard_dicom_tables()
 
-            :param : tablename : name of the table to add the column to
-            :param : column_definition : definition of the column example : ['0x0020', '0x000e', 'SeriesInst']"""
+            :param: tablename : name of the table to add the column to
+            :param: column_definition : definition of the column example : ['0x0020', '0x000e', 'SeriesInst']"""
 
         if not isinstance(column_definition[0], list):
             column_definition = [column_definition]
@@ -297,9 +307,9 @@ class pyconquest:
         Only for the DICOMimages table is Timestamp table is updated with the current time ( time of the rewrite ).
         For large databases and initial rebuild, use check_existing=False to speed up
 
-        :param : ds : the dicom tags from the file, in the pydicom format
-        :param : filename : the filename of the file that was read (to insert into the DICOMimages.ObjectFile column)
-        :param : check_existing : if True, a check is done before inserting the row into the table, default TRUE
+        :param: ds : the dicom tags from the file, in the pydicom format
+        :param: filename : the filename of the file that was read (to insert into the DICOMimages.ObjectFile column)
+        :param: check_existing : if True, a check is done before inserting the row into the table, default TRUE
         """
         sopinstanceuid = ds['0x0008', '0x0018'].value
 
@@ -372,12 +382,12 @@ class pyconquest:
     def rebuild_database_from_dicom(self, mrn=None, compute_only_missing=True, check_existing=True):
         """Rebuild the sqlite database by scanning the dicom data directory
 
-        :param : mrn : if given, only the data from that directory / patient MRN is put in the database
-        :param : ComputeOnlyMissing : if True a directory/MRN is only processed if there is NO entry in the database
+        :param: mrn : if given, only the data from that directory / patient MRN is put in the database
+        :param: ComputeOnlyMissing : if True a directory/MRN is only processed if there is NO entry in the database
          with that number default : True
-        :param check_existing : if True, a check is done when inserting rows in the db. put to False to speed up
+        :param: check_existing : if True, a check is done when inserting rows in the db. put to False to speed up
             initial database rebuilding
-        :returns : number of scanned files
+        :returns: number of scanned files
          """
         if mrn is None:
             directory = self.data_directory
@@ -408,8 +418,8 @@ class pyconquest:
     def store_dicom_file(self, filename, remove_after_store=False):
         """Places dicom file in proper directory in data directory and updates database
 
-        :param : filename : name of the dicom file to be placed in database
-        :param : remove_after_store : determines of file is deleted after storing it ( default : FALSE )
+        :param: filename : name of the dicom file to be placed in database
+        :param: remove_after_store : determines of file is deleted after storing it ( default : FALSE )
         """
         try:
             ds = dcmread(filename)
@@ -437,8 +447,8 @@ class pyconquest:
 
         Stores the file in the dicom file tree and updates the sql database with the tags for every file in directory
 
-        :param : directory_name : name of the directory where the files are that should be stored
-        :param : remove_after_store : determines of file is deleted after storing it ( default : FALSE )
+        :param: directory_name : name of the directory where the files are that should be stored
+        :param: remove_after_store : determines of file is deleted after storing it ( default : FALSE )
          """
         if  os.path.exists(directory_name):
             for root, dirs, files in os.walk(directory_name, topdown=True):
@@ -455,8 +465,8 @@ class pyconquest:
     def __extra_dicom_tags(self, ds,filename):
         """Save some tags contained into the database
 
-        :param : ds : dicom tags of a dicom file as read by pydicom.dcmread
-        :returns : a dict with extra parameters
+        :param: ds : dicom tags of a dicom file as read by pydicom.dcmread
+        :returns: a dict with extra parameters
         """
         returndict = {}
         returndict['DatabaseTimeStamp'] = time.time()
@@ -511,8 +521,21 @@ class pyconquest:
             if self.__compute_hash:
                 returndict['hash'] = hashlib.md5(pickle.dumps(ds[0x300a, 0x00b0].value)).hexdigest()
 
-        elif dicomtype == 'RTDOSE' and self.__compute_hash:
-            returndict['hash'] = hashlib.md5(pickle.dumps(ds.PixelData)).hexdigest()
+            try:
+                ReferencedSOPUID = ds[0x300c, 0x0060][0][0x0008, 0x1155].value
+                returndict['ReferencedSOPUID'] = ReferencedSOPUID
+            except:
+                log.error('Error when extracting referenced_seriesuid of RTSTRUCT from RTPLAN file')
+
+        elif dicomtype == 'RTDOSE':
+            try:
+                ReferencedSOPUID = ds[0x300c, 0x0002][0][0x0008, 0x1155].value
+                returndict['ReferencedSOPUID'] = ReferencedSOPUID
+            except:
+                log.error('Error when extracting referenced_seriesuid of RTPLAN from RTDOSE file')
+
+            if self.__compute_hash:
+                returndict['hash'] = hashlib.md5(pickle.dumps(ds.PixelData)).hexdigest()
 
         return returndict
 
@@ -524,11 +547,11 @@ class pyconquest:
     def delete_series(self, seriesuid='', query=None, delete_files=False, mrn=None):
         """Deletes a single or multiple series from the disk and from the database
 
-        :param : seriesuid : a single string (one seriesuid) or a list of seriesuids of series that should be deleted
-        :param : query : a query that should return SeriesInst with the series to delete
-        :param : delete_files : if set to True, the files are physically removed from disk (deleted), default=False
-        :param : mrn : delete for the given mrn in a fast manner, so only all the database entries with a direct query
-        :returns : nothing
+        :param: seriesuid : a single string (one seriesuid) or a list of seriesuids of series that should be deleted
+        :param: query : a query that should return SeriesInst with the series to delete
+        :param: delete_files : if set to True, the files are physically removed from disk (deleted), default=False
+        :param: mrn : delete for the given mrn in a fast manner, so only all the database entries with a direct query
+        :returns: nothing
         """
         if mrn is not None:
             if delete_files == True:
@@ -610,10 +633,10 @@ class pyconquest:
                                  UseSubDirectories=False):
         """Copies all dicom files belonging to a series to destination, described by either a seriesuid or a query.
 
-        :param : serieuid : a single string (one seriesuid) or a list of seriesuids of series that should be copied
-        :param : query  : should be a query for seriesuids, the query should return at least one column : SeriesInst
-        :param : CreateDir : determines of a directory is created if it does not exist ( default = True)
-        :param : UseSubDirectories : determines if when storig subdirectories with the name PatientID are used ( default=False)
+        :param: serieuid : a single string (one seriesuid) or a list of seriesuids of series that should be copied
+        :param: query  : should be a query for seriesuids, the query should return at least one column : SeriesInst
+        :param: CreateDir : determines of a directory is created if it does not exist ( default = True)
+        :param: UseSubDirectories : determines if when storig subdirectories with the name PatientID are used ( default=False)
         """
 
         if not seriesuid is None:
@@ -661,16 +684,17 @@ class pyconquest:
     #   Below is the dicom communication part using pynetdicom
     #
 
-    def send_dicom(self, addres='127.0.0.1',port=5678, patientid='', seriesuid='',query='', ae_title=b'pyconquest',
-                   sending_ae_title=b'PYNETDICOM'):
+    def send_dicom(self, addres='127.0.0.1',port=5678, patientid='', seriesuid='',query='', ae_title=b'PYNETDICOM',
+                   sending_ae_title=b'pyconquest'):
         """Sends dicom files via the dicom protocol to a (remote) destination, select on patientid, seriesuid or query
 
-        :param : addres : IP address of the dicom destination (computer)
-        :param : port : port number of the dicom destination
-        :param : patientid : if given sends all files of this patient
-        :param : serieuid : if given sends all files of this seriesuid
-        :param : query : sends all files resulting from this query, should contain 1 column called SeriesInst with the seriesuid
-        :param : ae_title : AE title of destination ( Default pyconquest )
+        :param: addres : IP address of the dicom destination (computer)
+        :param: port : port number of the dicom destination
+        :param: patientid : if given sends all files of this patient
+        :param: serieuid : if given sends all files of this seriesuid
+        :param: query : sends all files resulting from this query, should contain 1 column called SeriesInst with the seriesuid
+        :param: ae_title : AE title of destination ( Default PYNETDICOM )
+        :param: sending_ae_title : AE title of the sender (me) ( Default : pyconquest )
         """
         filename_list = []
         if not patientid == '':
@@ -693,13 +717,14 @@ class pyconquest:
 
         self.send_dicom_file(addres, port, filename_list, aetitle=ae_title, sending_ae_title=sending_ae_title)
 
-    def send_dicom_file(self, addres, port, filename_list, aetitle=b'pyconquest', sending_ae_title=b'PYNETDICOM'):
+    def send_dicom_file(self, addres, port, filename_list, aetitle=b'PYNETDICOM', sending_ae_title=b'pyconquest'):
         """Send a dicom file via DICOM protocol to a destination
 
-        :param : addres : IP address of the dicom destination (computer)
-        :param : port : port number of the dicom destination
-        :param : filename_list : either a single file or a list of filenames to send
-        :param : aetitle : AEtitle of destination ( Default pyconquest )
+        :param: addres : IP address of the dicom destination (computer)
+        :param: port : port number of the dicom destination
+        :param: filename_list : either a single file or a list of filenames to send
+        :param: aetitle : AEtitle of destination ( Default PYNETDICOM )
+        :param: sending_ae_title : AE title of the sender (me) ( Default : pyconquest )
         """
         # Initialise the Application Entity
         ae = AE(ae_title=sending_ae_title)
@@ -725,20 +750,35 @@ class pyconquest:
             # Release the association
             assoc.release()
         else:
-            log.error('Association rejected, aborted or never connected')
+            if assoc.is_rejected:
+                msg = ('{0}: {1}'.format(
+                    assoc.acceptor.primitive.result_str,
+                    assoc.acceptor.primitive.reason_str
+                ))
+                log.error(msg)
+            else:
+                log.error('Association aborted or never connected')
 
     def __log_open_dcm_connection(self,event):
         """Print the remote's (host, port) when connected."""
         msg = 'Connected with remote (host, port) : {}'.format(event.address)
         log.info(msg)
 
-    def start_dicom_listener(self, port=5678):
+    def start_dicom_listener(self, port=5678, write_to_database=True):
         """Starts a listener following the dicom network protocol. Default behaviour is to store the received file in the database
 
-        :param : port : portnumber
+        :param: port : portnumber
+        :param: write_to_database : Determines whether the sql database is updated or not (Default True)
         """
 
         print('starting listener on port : ' + str(port))
+        # update class variable that defines whether to write to database when receiving a file
+        if write_to_database is True:
+            self.__write_to_database_when_receiving_dicom_data = True
+        else:
+            self.__write_to_database_when_receiving_dicom_data = False
+            print('Not updating the database when receiving data (write_to_database was set to False !)')
+
         handlers = [(evt.EVT_C_STORE, self.handle_dicom_store_request),
                     (evt.EVT_CONN_OPEN, self.__log_open_dcm_connection)]
 
@@ -774,11 +814,12 @@ class pyconquest:
         ds.save_as(filename, write_like_original=False)
         print('dicom saved to file : ' + filename)
 
-        ds2 = dcmread(filename)
-        c2 = pyconquest(database_filename=self.database_filename, data_directory=self.data_directory,loglevel='INFO')
-        filename2 = "{}/{}".format(patientid, os.path.basename(filename))
-        c2.write_tags(ds2, filename2)
-        c2.close_db()
+        if self.__write_to_database_when_receiving_dicom_data is True:
+            ds2 = dcmread(filename)
+            c2 = pyconquest(database_filename=self.database_filename, data_directory=self.data_directory,loglevel='INFO')
+            filename2 = "{}/{}".format(patientid, os.path.basename(filename))
+            c2.write_tags(ds2, filename2)
+            c2.close_db()
 
         # Return a 'Success' status
         return 0x0000
@@ -824,13 +865,48 @@ class pyconquest:
         return result
     # some utility functions that are handy to have in the base class
 
+    def dump_data_to_csv(self, query=None, table='dicomseries', filename_dict=None, filename='query_dump.csv'):
+        """
+        Dump database tables to csv
+
+        Dumps tables or views or the result of a query to a csv file
+
+        :param query: if defined, the result of the query is saved to file default : None
+        :param table: a tablename or list of tablenames to dump to file : default : dicomseries
+        :param filename_dict: a dict to define for each table/view a filename, default : None
+        :param filename: a string defining the filename when using the query mode : default : 'query_dump.csv'
+        :return None:
+        """
+        if isinstance(table,list):
+            for t in table:
+                self.dump_data_to_csv(table=t, filename_dict=filename_dict)
+            return
+
+        if query is None:
+            query = 'select * from {}'.format(table)
+            csv_filename = '{}.csv'.format(table)
+            if table in filename_dict:
+                csv_filename = '{}.csv'.format(filename_dict[table])
+        else:
+            csv_filename = filename
+            table = 'dedicated query'
+
+        result = self.execute_db_query(query=query)
+
+        if len(result) > 0:
+            keys = result[0].keys()
+            with open(csv_filename, 'w', newline='') as output_file:
+                dict_writer = csv.DictWriter(output_file, keys)
+                dict_writer.writeheader()
+                dict_writer.writerows(result)
+            log.info('wrote {} to {}'.format(table, csv_filename))
 
     def set_roi_filter(self, exclude=[''], include=[''],roi_filter_flags=re.IGNORECASE):
         """sets the exclude and include filters for the roi names
 
-        :param : exclude : string or list of strings, each describing and exclusion
-        :param : include : string or list of strings, describe the rois to include, '' is : include all
-        :param : roi_filter_flags : flags for the re module, DEFAULT : re.IGNORECASE, set flags=0 to clear flags
+        :param: exclude : string or list of strings, each describing and exclusion
+        :param: include : string or list of strings, describe the rois to include, '' is : include all
+        :param: roi_filter_flags : flags for the re module, DEFAULT : re.IGNORECASE, set flags=0 to clear flags
 
         exclude is run before include filter
         """

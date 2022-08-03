@@ -68,6 +68,19 @@ from pyconquest import pyconquest
 c=pyconquest()
 c.dicom_series_summary()
 ```
+### Saving database information to a csv file
+```
+from pyconquest import pyconquest
+
+c=pyconquest()
+
+# by table(s) or views, specification of filenames is optional
+c.dump_data_to_csv(table='dicomstudies')
+c.dump_data_to_csv(table=['dicomseries','dicompatients'],
+                   filename_dict={'dicomseries': 'dicomseries_filename', 'dicompatients': 'dicompatients_filename'} )
+# by query
+c.dump_data_to_csv(query='select * from dicomstudies',filename='query_filename.csv')
+```
 
 ### More advanced querying and extraction from the database:
 ```
@@ -96,7 +109,7 @@ c.dicom_series_summary()
 ```
 
 
-## Adding and delting files to the database
+## Adding and deleting files to the database
 ### Adding a single file specified by name (optionally remove original)
 ```
 from pyconquest import pyconquest
@@ -148,6 +161,8 @@ from pyconquest import pyconquest
 
 c=pyconquest(data_directory='data2')
 c.start_dicom_listener(port=5678)
+# Below does not update the database which saves time
+c.start_dicom_listener(port=104, write_to_database=False)
 ```
 
 
@@ -197,6 +212,18 @@ twine upload dist/*
 ```
 
 # CHANGELOG
+
+### version 0.1.1 (skipped to 0.1.1 because some systems take 0.0.51 as default)
+- Added option **dump_data_to_csv()** to dump data from the database to csv files
+- Logging of errors to a (rotating) log file : "pyconquest_error.log"
+- Added option **write_to_database** to dicom_listener, if FALSE, sqlite db is not updated (for speed)
+- For RTDOSE the referenced SOP UID of the RTPLAN is saved to DicomImages table
+- For RTPLAN the referenced SOP UID of the RTSTUCT is saved to DicomImages table
+### version 0.0.7
+- added option not to check for double entries when rebuilding the database
+- added fast option to delete a patient from the database
+- database indices are now created when creating a new database
+- made index tables non unique to improve robustness
 
 ### version 0.0.6
 - **Rebuild_database_from_dicom()** now has option to rebuild only missing directories
