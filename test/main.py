@@ -9,7 +9,7 @@ c=pyconquest(sql_inifile_name='dicom.sql',loglevel='INFO', compute_hash=True)
 c.add_column_to_database(tablename='DICOMpatients',column_definition=['0x0020', '0x000d', 'StudyInst'])
 c.create_standard_dicom_tables()
 start = time.time()
-nr_files=c.rebuild_database_from_dicom('1234567', compute_only_missing=False)
+nr_files=c.rebuild_database_from_dicom('1234567', compute_only_missing=False, check_existing=False)
 end = time.time()
 print('numer of files: {}; should be 13'.format(nr_files))
 print('time elapsed : '+ str(end-start) + ' seconds ; ms per file : '+ str( 1000*(end-start)/nr_files))
@@ -17,6 +17,11 @@ print('time elapsed : '+ str(end-start) + ' seconds ; ms per file : '+ str( 1000
 #test printing
 print(pd.DataFrame(c.dicom_series_summary()))
 print('should look like : \n0   1234567     1     0     0           2         1         1')
+
+#analyse images and add data to table
+print('below serieuid of series that have inconsistent slice distances ( for instance due to missing slices )')
+print(c.analyse_images())
+#c.analyse_images(list_of_seriesuid='1.2.840.113704.1.111.7700.1448024597.12')
 
 #test copying data
 #by seriesuid
@@ -39,7 +44,7 @@ c.send_dicom(seriesuid='2.16.840.1.113669.2.931128.880152.20190524082318.537836'
 #c.send_dicom(addres='127.0.0.1', port=5678, patientid='1234567')
 
 #read all files from directory input
-c.store_dicom_files_from_directory('input')
+c.store_dicom_files_from_directory('input',sopinstance_as_filename=True)
 
 # non existent file
 c.store_dicom_file('notpresent.dcm')
@@ -86,5 +91,13 @@ c.delete_series(query='select * from dicomseries where modality="CT"')
 lst = c.execute_db_query('select * from dicomseries', return_list_from_col='SeriesInst')
 print('should be list of 3 uids : '+str(lst))
 
+# fast delete of all data from a single patient
+#c.delete_series(mrn='1234567', delete_files=False)
+
+c.dump_data_to_csv(table=['dicomseries','dicompatients'],
+                   filename_dict={'dicomseries': 'dicomseries_filename', 'dicompatients': 'dicompatients_filename'} )
+c.dump_data_to_csv(query='select * from dicomstudies',filename='query_filename.csv')
+
+#c.start_dicom_listener(write_to_database=False)
 
 c.close_db()

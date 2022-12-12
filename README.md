@@ -68,6 +68,16 @@ from pyconquest import pyconquest
 c=pyconquest()
 c.dicom_series_summary()
 ```
+
+## Extracting extra data from the dicomfiles
+### adds data concerning images to the dicomseries table
+```
+from pyconquest import pyconquest
+
+c=pyconquest()
+c.analyse_images()
+
+```
 ### Saving database information to a csv file
 ```
 from pyconquest import pyconquest
@@ -125,6 +135,10 @@ from pyconquest import pyconquest
 c=pyconquest()
 c.store_dicom_files_from_directory('input_directory_name')
 c.store_dicom_files_from_directory('input_directory_name', remove_after_store=True)
+
+# using below, the filename is made equal to the sopinstanceuid :
+c.store_dicom_files_from_directory('input_directory_name', sopinstance_as_filename=True)
+
 ````
 
 ### Deleting series or list of series from the database (optionally 'real' deletion of the file)
@@ -213,6 +227,14 @@ twine upload dist/*
 
 # CHANGELOG
 
+### version 0.1.2
+- Added method **analyse_images** to analyse CT/MR/PET images and add data to DicomSeries table. Data added is number of slices, min/max slicepositions and a check for slice consistency is done.
+- Added postprocessing routine **database_postprocessing()** of the database to enrich the database with entries that can only be added when the database is
+complete. For instance the Referenced seriesuid in DICOMseries table for RTDOSE. Routine is automatically
+executed at the end of **rebuild_database_from_dicom()** 
+- Added option called **sopinstance_as_filename** to **store_dicom_files_from_directory()** and **store_dicom_file()** to change the actual filename in the database from the original (default)
+to  sopinstanceUID.dcm
+
 ### version 0.1.1 (skipped to 0.1.1 because some systems take 0.0.51 as default)
 - Added option **dump_data_to_csv()** to dump data from the database to csv files
 - Logging of errors to a (rotating) log file : "pyconquest_error.log"
@@ -220,7 +242,7 @@ twine upload dist/*
 - For RTDOSE the referenced SOP UID of the RTPLAN is saved to DicomImages table
 - For RTPLAN the referenced SOP UID of the RTSTUCT is saved to DicomImages table
 ### version 0.0.7
-- added option not to check for double entries when rebuilding the database
+- added option not to check for double entries when rebuilding the database (for speed)
 - added fast option to delete a patient from the database
 - database indices are now created when creating a new database
 - made index tables non unique to improve robustness

@@ -99,7 +99,7 @@ class pyconquest:
         self.conn_pacs = sqlite3.connect(self.database_filename)
         log.info('Connected to ' + self.database_filename)
         # if the database is new, so empty recreate the tables this can save a step and is logical
-        result = self.execute_db_query("SELECT name FROM sqlite_master WHERE type='table' AND name='DICOMseries' ")
+        result = self.execute_db_query("SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='dicomseries' ")
         if not result:
             log.info('Creating tables because sqlite database is empty')
             self.create_standard_dicom_tables()
@@ -413,20 +413,29 @@ class pyconquest:
                     self.write_tags(ds, full_filename[string_startingpoint:], check_existing=check_existing)
                 except Exception as e:
                     log.error(str(e))
+
+        self.database_postprocessing()
         return counter
 
-    def store_dicom_file(self, filename, remove_after_store=False):
+    def store_dicom_file(self, filename, remove_after_store=False, sopinstance_as_filename=False):
         """Places dicom file in proper directory in data directory and updates database
 
         :param: filename : name of the dicom file to be placed in database
-        :param: remove_after_store : determines of file is deleted after storing it ( default : FALSE )
+        :param: remove_after_store : determines if file is deleted after storing it ( default : FALSE )
+        :param: sopinstance_as_filename : if set to True the sopuid will become the new filename ( default : FALSE )
         """
         try:
             ds = dcmread(filename)
             patientid = ds[0x0010, 0x0020].value
 
-            target_filename = "{}/{}/{}".format(self.data_directory, patientid, os.path.basename(filename))
-            target_filename_db = "{}/{}".format(patientid, os.path.basename(filename))
+            if sopinstance_as_filename:
+                SOPInstanceUID = ds[0x0008, 0x0018].value
+                target_base_filename = "{}.dcm".format(SOPInstanceUID)
+            else:
+                target_base_filename = os.path.basename(filename)
+
+            target_filename = "{}/{}/{}".format(self.data_directory, patientid, target_base_filename)
+            target_filename_db = "{}/{}".format(patientid, target_base_filename)
             path = "{}/{}".format(self.data_directory, patientid)
             if not os.path.exists(path):
                 os.makedirs(path)
@@ -442,20 +451,23 @@ class pyconquest:
         except Exception as e:
             log.error('Exception encountered in store_dicom_file: ' + str(e))
 
-    def store_dicom_files_from_directory(self, directory_name, remove_after_store=False):
-        """Scans the directory and runs store_dicom_file on all files.
+    def store_dicom_files_from_directory(self, directory_name, remove_after_store=False, sopinstance_as_filename=False):
+        """Scans the directory and runs store_dicom_file on all files. Can handle nested directories
 
         Stores the file in the dicom file tree and updates the sql database with the tags for every file in directory
+        or subdirectories
 
         :param: directory_name : name of the directory where the files are that should be stored
-        :param: remove_after_store : determines of file is deleted after storing it ( default : FALSE )
+        :param: remove_after_store : determines if file is deleted after storing it ( default : FALSE )
+        :param: sopinstance_as_filename : if set to True the sopuid will become the new filename ( default : FALSE )
          """
         if  os.path.exists(directory_name):
             for root, dirs, files in os.walk(directory_name, topdown=True):
                 for name in files:
                     full_filename = os.path.join(root, name)
                     log.info('Processing ... ' + full_filename)
-                    self.store_dicom_file(full_filename, remove_after_store=remove_after_store)
+                    self.store_dicom_file(full_filename, remove_after_store=remove_after_store,
+                                          sopinstance_as_filename=sopinstance_as_filename)
             log.info('Processed {} files'.format(len(files)))
             return 1
         else:
@@ -849,11 +861,11 @@ class pyconquest:
         result = self.execute_db_query(query)
 
         if print_summary:
-            print('  PatientID    nrCT nrMR  nrPT nrRTSTRUCT nrRTDOSE nrRTPLAN')
+            print('    PatientID    nrCT nrMR  nrPT nrRTSTRUCT nrRTDOSE nrRTPLAN')
             rowcount=0
             for r in result:
                 rowcount=rowcount+1
-                print('{}{}{}{}{}{}{}{}'.format(str(rowcount).ljust(3),
+                print('{}{}{}{}{}{}{}{}'.format(str(rowcount).ljust(5),
                     r['PatientID'].ljust(14),
                     str(r['nrCT']).ljust(5),
                     str(r['nrMR']).ljust(5),
@@ -900,6 +912,64 @@ class pyconquest:
                 dict_writer.writeheader()
                 dict_writer.writerows(result)
             log.info('wrote {} to {}'.format(table, csv_filename))
+
+    def analyse_images(self, list_of_seriesuid=None):
+        """Analyses images for number of slices and min/max sliceposition and enters the result in DICOMseries table
+
+        :param : list_of_seriesuid : list of seriesuid or single seriesuid, if NONE all images are analysed
+        :returns : list of seriesuid where an inconsistency is found in the slice distances
+        """
+        for colname in ['N_slices', 'min_sliceposition', 'max_sliceposition', 'ScanRange', 'SliceThickness',
+                        'UniqueSliceDistance']:
+            append_query = 'alter table dicomseries add {} character varying(128)'.format(colname)
+            self.execute_db_query(append_query)
+            log.info('appended column {} to dicomseries table'.format(colname))
+
+        if list_of_seriesuid is None:
+            query = "select SeriesInst from dicomseries where modality in ('CT','MR','PT')"
+            list_of_seriesuid = self.execute_db_query(query, return_list_from_col='SeriesInst')
+        elif isinstance(list_of_seriesuid, str):
+            list_of_seriesuid = [list_of_seriesuid]
+
+        seriesinst_with_inconsistent_slicedistances = []
+        for seriesinst in list_of_seriesuid:
+            query = "select count(*) as N_slices," \
+                    "min(CAST(slicelocat as float)) as min_sliceposition, " \
+                    "max(CAST(slicelocat as float)) as max_sliceposition, " \
+                    "abs(min(CAST(slicelocat as float))-max(CAST(slicelocat as float))) as ScanRange, "\
+                    "max(CAST(slicethick as float)) as SliceThickness " \
+                    "from dicomimages as di where di.SeriesInst='{}'".format(seriesinst)
+            result = self.execute_db_query(query)
+            if result[0]['N_slices'] == 0:
+                log.error('Found zero slices in query for series: {} '.format(seriesinst))
+                continue
+
+            # check consistency of slice distances
+            query_for_slicedistance_consistency = """
+                select 
+                (select min(CAST(d2.slicelocat as float)) from dicomimages as d2 where d2.SeriesInst=d1.SeriesInst and 
+                CAST(d2.slicelocat as float)>CAST(d1.slicelocat as float))-CAST(d1.slicelocat as float) as diff_to_next_slicelocat
+                from dicomimages as d1 where d1.SeriesInst='{}' order by CAST(d1.slicelocat as float)
+            """.format(seriesinst)
+            result2 = self.execute_db_query(query_for_slicedistance_consistency, return_list_from_col='diff_to_next_slicelocat')
+            # leave only unique values and remove the None-s (last slice has no slice distance to next slice ...
+            result2 = [i for i in result2 if i is not None]
+            result2 = [round(float(num), 1) for num in result2]
+            result2 = list(dict.fromkeys(result2))
+
+            if (len(result2)) == 1:
+                result[0]['UniqueSliceDistance'] = result2[0]
+            else:
+                log.error('Non Uniform slicedistance for series: {}; found {} '.format(seriesinst, result2))
+                result[0]['UniqueSliceDistance'] = "''"
+                seriesinst_with_inconsistent_slicedistances.append(seriesinst)
+
+            log.info('Adding slice info to dicomseries table for series: {} '.format(seriesinst))
+            for item, value in result[0].items():
+                query2 = "update dicomseries set {}={} where seriesInst='{}'".format(item, value, seriesinst)
+                self.execute_db_query(query2)
+
+        return seriesinst_with_inconsistent_slicedistances
 
     def set_roi_filter(self, exclude=[''], include=[''],roi_filter_flags=re.IGNORECASE):
         """sets the exclude and include filters for the roi names
@@ -977,9 +1047,32 @@ class pyconquest:
             'CREATE INDEX IF NOT EXISTS "index_dicomimages" ON "DICOMimages" ("SOPInstanc")'
         index_dicomseries = \
             'CREATE INDEX IF NOT EXISTS "index_dicomseries" ON "DICOMseries" ("SeriesInst")'
+        index_dicomimages_seriesinst = \
+            'CREATE INDEX IF NOT EXISTS "index_dicomimages_seriesinst" ON "DICOMimages" ("SeriesInst")'
         self.execute_db_query(index_dicomimages)
         self.execute_db_query(index_dicomseries)
+        self.execute_db_query(index_dicomimages_seriesinst)
         log.info('Created index_dicomimages and index_dicomseries')
+
+    def database_postprocessing(self):
+        """
+        postprocesses the database to enrich the database for entries that can only be added when the database is
+        complete.
+        Updates the Referenced seriesuid -> DICOMseries.Referenced for RTDOSE and RTPLAN
+        :return: None
+        """
+
+        query_to_fill_Referenced_for_RTDOSE = """
+        update dicomseries set referenced=
+            (
+            select d2.seriesinst from dicomimages as d1 
+            inner join dicomimages as d2 on d2.SOPInstanc=d1.ReferencedSOPUID
+            where d1.seriesinst=dicomseries.seriesinst limit 1
+            )
+        where modality in ('RTDOSE','RTPLAN')
+        """
+        self.execute_db_query(query_to_fill_Referenced_for_RTDOSE)
+        log.info('postprocessing of database done')
 
     def __set_default_database(self):
         log.info('Using default database layout,specify .sql file during instance creation to change this')
