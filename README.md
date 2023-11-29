@@ -199,7 +199,47 @@ CTquery="select seriesinst from dicomseries where modality=\'CT\'"
 c.copy_dicom_files_to_dest(query=CTquery, destination='CTdata',UseSubDirectories=True)
 ```
 
+## Changing tags of dicom files
+Simple functionality to change a single tag of a dicom file. For
+each change the file is opened and saved, so not suitable for many
+changes per dicom file.
+```
+from pyconquest import pyconquest
 
+c=pyconquest()
+# single tag of single file
+c.change_tag('test.dcm', tag='PatientBirthDate', new_value='19000101')
+
+# all tags from a list of filenames
+c.change_all_tags(filename=['test.dcm', 'test.dcm'], new_value='19000102')
+
+# using a helper function, change by series, study or patientid
+lst = c.get_list_of_filenames(seriesuid='2.16.840.1.113669.2.931128.880152.20190524082317.937233'))
+c.change_all_tags(filename=lst, tag='PatientBirthDate', new_value='19000101')
+
+```
+## Deleting and changing ROI names in a RTSTRUCT file
+
+It is possible to change or delete rois in a RTSTRUCT file using either of 3 modes:
+- delete : delete the specific names 
+- leave : leave only the given names and delete all others
+- change : change the given names to alternatives
+
+there are flags to actualy write the file or not.
+using delete_points you can indicate whether deletion of points is allowed
+
+you can use **get_list_of_filenames()** to apply to multiple files.
+```
+from pyconquest import pyconquest
+
+c=pyconquest()
+c.modify_rtstruct(filename='tst.dcm',mode='change',roiname=['Lung_R','Lung_L'],newname=['LR','LL'],write_file=True)
+c.modify_rtstruct(filename='tst.dcm',mode='delete',roiname=['Lung_R','Lung_L'],write_file=True)
+c.modify_rtstruct(filename='tst.dcm',mode='leave',roiname=['Lung_R','Lung_L'],write_file=True)
+# standard mode is to NOT delete points, you can overrule
+# and filename can be a list of filenames
+c.modify_rtstruct(filename=['tst.dcm','tst2.dcm'],mode='leave',roiname=['Lung_R','Lung_L'],write_file=True,delete_points=True)
+```
 ## Definition of the database structure
 The database can be defined using various ways
 - If a file dicom.sql exist that file is used
@@ -207,16 +247,15 @@ The database can be defined using various ways
     - use sql_infilename='filename.sql' when creating 
 - If no file is found, a hardcoded definition is taken
     - You can add columns to this definition as illustrated below:
-
-
+    
 ````
 from pyconquest import pyconquest
 
 c=pyconquest(sql_inifile_name='dicom.sql',loglevel='INFO')
 c.add_column_to_database(tablename='DICOMpatients',column_definition=['0x0020', '0x000d', 'StudyInst'])
 c.create_standard_dicom_tables()
-
 ````
+
 the .sql files are compatible with the original Conquest file format
 
 ### To install and upload to PyPi:
@@ -226,6 +265,10 @@ twine upload dist/*
 ```
 
 # CHANGELOG
+
+### version 0.1.3
+- Added functionality **change_tag()** to change tags of DICOM files
+- Added functionality **modify_rtstruct()** to change and delete roi's from files
 
 ### version 0.1.2
 - Added method **analyse_images** to analyse CT/MR/PET images and add data to DicomSeries table. Data added is number of slices, min/max slicepositions and a check for slice consistency is done.

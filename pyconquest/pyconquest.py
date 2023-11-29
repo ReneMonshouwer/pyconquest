@@ -773,7 +773,8 @@ class pyconquest:
 
     def __log_open_dcm_connection(self,event):
         """Print the remote's (host, port) when connected."""
-        msg = 'Connected with remote (host, port) : {}'.format(event.address)
+        msg = 'Connected with remote (host, port) : {} : {}'.format(event.address, event.assoc.remote)
+        #msg = 'Connected with remote (host, port) : {} : {}'.format(event.address, event.assoc.ae.ae_title)
         log.info(msg)
 
     def start_dicom_listener(self, port=5678, write_to_database=True):
@@ -1073,6 +1074,162 @@ class pyconquest:
         """
         self.execute_db_query(query_to_fill_Referenced_for_RTDOSE)
         log.info('postprocessing of database done')
+
+    #
+    #   some routines to modify tags in a file
+    #
+
+    def change_tag(self, filename, tag='PatientBirthDate', new_value='19000101', create=False):
+        '''change tag of a dicom file
+
+        :param filename: full path of filename of the file to change (so incl for instance : 'data/MRN/...dcm'
+        :param tag: tag can be the name/description of the tag, or a tuble defining the element ('0x0010','0x0030')
+        :param new_value: new value of the tag
+        :param create: it a tag (defined by tuple) is not present, the tag is created with the new value
+        if create=True ( default=False )
+        :return: 1=succes, -1 is not succesfull
+        '''
+        try:
+            ds = dcmread(filename)
+            if isinstance(tag, str):
+                if tag in ds:
+                    ds.data_element(tag).value = new_value
+                    log.info('now saving : {} with {} changed to {}'.format(filename, tag, new_value))
+                else:
+                    log.error('tag {} not in file : {}'.format(tag, filename))
+                    return -1
+
+            if isinstance(tag,tuple):
+                if tag in ds:
+                    ds[tag].value = new_value
+                    log.info('now saving : {} with {} changed to {}'.format(filename, tag, new_value))
+                elif create:
+                    ds.add_new(tag,'LT',new_value) #LO is long string(64 char max), LT is long text (10240 mx)
+                    log.info('now created : {} with {} changed to {}'.format(filename, tag, new_value))
+                else:
+                    log.error('element {} not found, set create=True to create the tag'.format(tag))
+                    return -1
+
+            ds.save_as(filename)
+            return 1
+        except Exception as e:
+            log.error('error {} in writing tag {} to file {}'.format(str(e), tag, filename))
+
+    def get_list_of_filenames(self, filename=None, seriesuid=None, studyuid=None):
+        """ Returns a list of filenames, input is either a single or a list of filenames, or a single seriesuid or a
+            list of series uids. In the future also studyuid and patientid ?
+        """
+
+        if filename is not None:
+            if isinstance(filename, list):
+                return filename
+            else:
+                return [filename]
+        elif seriesuid is not None or studyuid is not None:
+            if isinstance(seriesuid, str):
+                seriesuid = [seriesuid]
+            if isinstance(studyuid, str):
+                studyuid = [studyuid]
+            if seriesuid is not None:
+                query = 'select ObjectFile from dicomimages where seriesinst="{}"'
+                uidlist=seriesuid
+                log.info('creating filelist derived from seriesuid or list of seriesuids')
+            else:
+                query = '''select di.ObjectFile from dicomimages as di
+                            inner join dicomseries as ds on di.seriesinst=ds.seriesinst
+                            where ds.studyinsta="{}"'''
+                uidlist=studyuid
+                log.info('creating filelist derived from studyuid or list of studyuids')
+
+            returnlist = []
+            for uid in uidlist:
+                q = query.format(uid)
+                result = self.execute_db_query(q)
+                filelist = ['{}\{}'.format(self.data_directory, d['ObjectFile']) for d in result]
+                returnlist = returnlist + filelist
+            return returnlist
+
+    def change_all_tags(self, filename=None, seriesuid=None, studyuid=None,
+                        tag='PatientBirthDate', new_value='19000101', create=False):
+
+        list_of_filenames = self.get_list_of_filenames(filename=filename, seriesuid=seriesuid,studyuid=studyuid)
+        for fn in list_of_filenames:
+            self.change_tag(filename=fn, tag=tag, new_value=new_value, create=create)
+
+    def modify_rtstruct(self,filename,mode,roiname,newname='', write_file=False, delete_points=False):
+        ''' Modifies an rtstruct file by changing or deleting roi's
+
+        :param filename: filename of file to process
+        :param mode: can be change ( to change roi name ), delete ( to delete roi's ) or leave ( to delete all but the
+        names defined in list roiname
+        :param roiname: list of roi names to change/delete or leave after processing
+        :param newname: only for change mode : list of new names, list should be of equal length as 'roinames'
+        :param write_file: defines whether to actually replace the file (default False)
+        :param delete_points: defines wether to delete points in the leave mode ( default False )
+        :return: pydicom dataset
+        '''
+        if mode not in ['leave','change','delete']:
+            log.error('mode {} not known, choose from : change,leave or delete'.format(mode))
+            return
+
+        # check consistency of old/new names
+        if len(roiname) != len(newname) and mode == 'change':
+            log.error('Lengths of roiname and newname are not equal : {} // {}'.format(roiname,newname))
+            return -1
+
+        # if the filename is a list, do a recursive call to this same routine with every element of the list
+        if isinstance(filename, list):
+            for fn in filename:
+                self.modify_rtstruct(filename=fn, mode=mode, roiname=roiname, newname=newname,
+                                          write_file=write_file,delete_points=delete_points)
+            return -1
+
+        try:
+            ds = dcmread(filename)
+            dicomtype = ds[0x0008, 0x0060].value
+            if dicomtype == 'RTSTRUCT':
+                contours = ds[0x3006, 0x0020].value
+                roicounter = 0
+                contourindices_not_in_roinames = []
+                contourindices_to_delete = []
+                for c in contours:
+                    if c[0x3006, 0x0026].value in roiname:
+                        index = roiname.index(c[0x3006, 0x0026].value)
+                        if mode == 'change':
+                            ds[0x3006, 0x0020][roicounter][0x3006, 0x0026].value = newname[index]
+                        elif mode == 'delete':
+                            log.info('deleting : ind : {}, name {}'.format(roicounter, c[0x3006, 0x0026].value))
+                            contourindices_to_delete.append(roicounter)
+                    else:
+                        contourindices_not_in_roinames.append(roicounter)
+                    roicounter = roicounter + 1
+
+                if mode == 'leave' or 'delete':
+                    if mode == 'leave':
+                        contourindices_to_delete = contourindices_not_in_roinames
+                    log.info('Modus {} : will delete indices {}'.format(mode, contourindices_to_delete))
+                    shift = 0  # during the deletion the indices are shifting downwards
+                    for i in contourindices_to_delete:
+                        roitype = ds[0x3006, 0x0039][i - shift][0x3006, 0x0040][0][0x3006, 0x0042].value
+                        roiname = ds[0x3006, 0x0020][i - shift][0x3006, 0x0026].value
+                        if not ((str(roitype) == 'POINT' and delete_points == False ) and mode == 'leave'):
+                            log.info('deleting: {} of type {}'.format(roiname, str(roitype)))
+                            del ds[0x3006, 0x0020].value[i - shift]
+                            del ds[0x3006, 0x0039].value[i - shift]
+                            del ds[0x3006, 0x0080].value[i - shift]
+                            shift = shift + 1
+                if write_file:
+                    ds.save_as(filename)
+                    log.info('Saved to : {} '.format(filename))
+                return ds
+            else:
+                log.error('not an RTSTRUCTFILE : {}'.format(filename))
+
+        except Exception as e:
+            log.error('Error {} file : {} '.format(str(e), filename))
+    #
+    # default database format
+    #
 
     def __set_default_database(self):
         log.info('Using default database layout,specify .sql file during instance creation to change this')
