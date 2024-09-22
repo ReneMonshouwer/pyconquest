@@ -518,6 +518,19 @@ class pyconquest:
                 nr_fractions_list.append(FractionGroup[0x300a, 0x0078].value)
                 nr_beams_list.append(FractionGroup[0x300a, 0x0080].value)
 
+            BeamSequence = ds[0x300a, 0x00b0].value
+            Beam_properties_list = []
+            for Beam in BeamSequence:
+                Beam_properties_list.append([
+                    Beam[0x300a, 0x00c2].value,                     # beam name
+                    Beam[0x300a, 0x00c4].value,                     # beam type
+                    Beam[0x300a, 0x00c6].value,                     # radiation type
+                    Beam[0x300a, 0x00d0].value,                     # number of wedges
+                    Beam[0x300a, 0x0110].value,                     # number of Control Points
+                    Beam[0x300a, 0x0111][0][0x300a, 0x0114].value,  # energy of CP 0 of beam
+                    Beam[0x300a, 0x0111][0][0x300a, 0x011e].value   # gantry angle of CP 0 of beam
+                ])
+
             #return only the value if there is only 1 FractionGroup, otherwise the list
             if len(nr_fractions_list) == 1:
                 returndict['Nfractions'] = nr_fractions_list[0]
@@ -528,6 +541,11 @@ class pyconquest:
                 returndict['ElementCount'] = nr_beams_list[0]
             else:
                 returndict['ElementCount'] = nr_beams_list
+
+            if len(Beam_properties_list) == 1:
+                returndict['ElementList'] = Beam_properties_list[0]
+            else:
+                returndict['ElementList'] = Beam_properties_list
 
             # RTPLAN has only the hash of the beam sequence
             if self.__compute_hash:
