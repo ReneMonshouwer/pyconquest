@@ -103,6 +103,12 @@ query='select * from dicomseries where modality='CT'
 list_of_seriesuid=c.execute_db_query(query,return_list_from_col='SeriesInst')
 for seriesuid in list_of_seriesuid:
   print(seriesuid)
+  
+In dicomimages.ElementList information is saved in 'python like' nested lists as a string. 
+You can use the following code to turn the string ( in Python ) into a real list:
+
+beam_info =eval(' '.join([("'"+part+"'" if part not in ['[[', ']]', ',', ' ', '', ']', '[', '],'] else part)
+                      for part in str(**ElementListString**).split(' ')]))
 ```
 ### Using non standard names and directories
 ```
@@ -202,7 +208,10 @@ c.copy_dicom_files_to_dest(query=CTquery, destination='CTdata',UseSubDirectories
 ## Changing tags of dicom files
 Simple functionality to change a single tag of a dicom file. For
 each change the file is opened and saved, so not suitable for many
-changes per dicom file.
+changes per dicom file. 
+
+**NOTE** : The tags are changed in the dicom file only, not in the database. 
+So if needed, a rebuild database needs to be done to synchronise the database.
 ```
 from pyconquest import pyconquest
 
@@ -225,10 +234,13 @@ It is possible to change or delete rois in a RTSTRUCT file using either of 3 mod
 - leave : leave only the given names and delete all others
 - change : change the given names to alternatives
 
-there are flags to actualy write the file or not.
-using delete_points you can indicate whether deletion of points is allowed
+There are flags to actualy write the file or not.
+Using **delete_points** you can indicate whether deletion of points is allowed
 
 you can use **get_list_of_filenames()** to apply to multiple files.
+
+**NOTE** : The tags are changed in the dicom file only, not in the database. 
+So if needed, a rebuild database needs to be done to synchronise the database.
 ```
 from pyconquest import pyconquest
 
@@ -265,6 +277,9 @@ twine upload dist/*
 ```
 
 # CHANGELOG
+
+### version 0.1.4
+- For RTPLAN, beam information is saved in the column DicomImages.ElementList
 
 ### version 0.1.3
 - Added functionality **change_tag()** to change tags of DICOM files

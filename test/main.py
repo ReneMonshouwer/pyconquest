@@ -5,7 +5,7 @@ import time
 import pandas as pd
 
 #normal rebuild
-c=pyconquest(sql_inifile_name='dicom.sql',loglevel='INFO', compute_hash=True)
+c=pyconquest(sql_inifile_name='dicom.sql',loglevel='INFO', compute_hash=True,data_directory=r"C:\Users\Rene\Documents\GitHub\data")
 c.add_column_to_database(tablename='DICOMpatients',column_definition=['0x0020', '0x000d', 'StudyInst'])
 c.create_standard_dicom_tables()
 start = time.time()
