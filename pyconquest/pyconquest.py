@@ -1,12 +1,19 @@
 import sqlite3
 import logging
-from pydicom import dcmread
+from pydicom import dcmread, dataset
 import os
 import os.path
 import re
 import shutil
+import pynetdicom._config
 from pynetdicom import AE, evt, AllStoragePresentationContexts, StoragePresentationContexts
-import pkg_resources
+from pynetdicom.sop_class import (
+    PatientRootQueryRetrieveInformationModelGet,
+    PatientRootQueryRetrieveInformationModelFind,
+    PatientRootQueryRetrieveInformationModelMove,
+    CTImageStorage
+)
+#import pkg_resources
 import hashlib
 import pickle
 import time
@@ -39,7 +46,7 @@ class pyconquest:
                            'Study': 'DICOMstudies',
                            'WorkList': 'DICOMworklist'}
     __extra_imagetable_columns = ['ObjectFile', 'ElementCount', 'ElementList', 'Nfractions',
-                                  'UniqueFOR_UID', 'ReferencedSeriesUID', 'ReferencedSOPUID','DatabaseTimeStamp', 'hash']
+                                  'UniqueFOR_UID', 'ReferencedSeriesUID', 'ReferencedSOPUID', 'DatabaseTimeStamp', 'hash']
     __prev_seriesuid = ''
     __prev_studyuid = ''
     __prev_patientid = ''
@@ -49,7 +56,8 @@ class pyconquest:
     __write_to_database_when_receiving_dicom_data = True
     __instance_creation_time = ''
     try:
-        __version__ = pkg_resources.get_distribution("pyconquest").version
+        #__version__ = pkg_resources.get_distribution("pyconquest").version
+        __version__ = 'Unknown'
     except:
         __version__ = 'Unknown'
     data_directory = ''
@@ -109,7 +117,7 @@ class pyconquest:
         self.conn_pacs.close()
         log.info('Closed connection to ' + self.database_filename)
         timediff = time.time() - self.__instance_creation_time
-        log.info('Time elapsed : {:.1f} seconds ({:.2f} min)'.format(float(timediff), float(timediff/60.0)))
+        log.info('Time elapsed : {:.1f} seconds ({:.2f} min)'.format(float(timediff), float(timediff / 60.0)))
 
     def execute_db_query(self, query, return_list_from_col=None):
         """Executes sqlite query on the opened database, and returns the result
@@ -126,7 +134,7 @@ class pyconquest:
             data = cursor.fetchall()
             cols = cursor.description
             query_result = [dict(line) for line in [zip([column[0] for column in cols], row) for row in data]]
-            log.debug('Query : '+query)
+            log.debug('Query : ' + query)
             log.debug('Result: ' + str(query_result))
         except Exception as e:
             log.error('exception ' + str(e) + '\nencountered in execution of db query: ' + query)
@@ -165,6 +173,38 @@ class pyconquest:
             else:  # something else is wrong
                 log.error("Error {} when inserting dict {} into table {}".format(str(e), datadict, tablename))
 
+    def load_csv_to_table(self, filename, tablename, first_row_are_columnnames=True, key_translation={}, delimiter=';'):
+        """
+                Loads a csv file and inserts in into a table using insert_dict
+                A routine to be used to load data in the db to combine/join with pacs data
+
+                :param: filename : name of the csv file to open
+                :param: tablename: name of table to store csv file in
+                :param: first_row_are_columnnames: not implemented yet
+                :param: key_translation: dictionary to convert column name in csv file to the column name in the db
+                :param: delimiter: delimiter used in csv file, default ;
+                :return: nothing
+                example of key:translation : {'aantal fracties':'aantal_fracties','1e*':'eerste_bestraling'}
+                """
+        try:
+            with open(filename, 'r') as f:
+                    dict_reader = csv.DictReader(f, delimiter=delimiter)
+                    list_of_dict = list(dict_reader)
+                    nrows = 1
+                    for row in list_of_dict:
+                        for key, value in key_translation.items():
+                            if key in row.keys():
+                                row[value] = row[key]
+                                del row[key]
+                            else:
+                                log.info("Trying to replace '{}' but this key is not found".format(key))
+                        self.insert_dict(tablename, row)
+                        nrows = nrows + 1
+
+                    log.info("Read file : {} and inserted {} rows".format(filename, nrows))
+        except FileNotFoundError:
+            log.error("Could not find file: {}, Please check the file path.".format(filename))
+
     def __delete_table(self, tablename):
         """"Delete table with given name"""
         try:
@@ -172,7 +212,7 @@ class pyconquest:
             cur.execute('DROP TABLE IF EXISTS ' + tablename)
             self.conn_pacs.commit()
         except Exception as e:
-            log.error('failed to drop table : ' + tablename )
+            log.error('failed to drop table : ' + tablename)
 
     def __check_if_table_contains(self, tablename, colname, value):
         """Check if the table contains a certain row with specific value
@@ -214,14 +254,14 @@ class pyconquest:
                 :param: exceptions : dictionary with exceptions : example : {'col1':'int'} makes col1 an int
                 :param: default_format : default type of column : DEFAULT : character varying(128)
                 :returns: string formatted as an table build query"""
-        #columns_string = (' character varying(128),'.join(mydict.keys()) + ' character varying(128)').replace("-", "_")
+        # columns_string = (' character varying(128),'.join(mydict.keys()) + ' character varying(128)').replace("-", "_")
         columns_string = ''
         for b in mydict:
             if b in exceptions:
                 fm = exceptions[b]
             else:
                 fm = default_format
-            columns_string=columns_string+"{} {},".format(b, fm)
+            columns_string = columns_string + "{} {},".format(b, fm)
 
         sql = """CREATE TABLE {} ({})""".format(table, columns_string[:-1].replace("-", "_"))
         return sql
@@ -392,16 +432,16 @@ class pyconquest:
         if mrn is None:
             directory = self.data_directory
         else:
-            directory = '{}/{}'.format(self.data_directory,mrn)
+            directory = '{}/{}'.format(self.data_directory, mrn)
 
         already_present = self.execute_db_query(query='select PatientID from dicompatients',
-                                              return_list_from_col='PatientID')
+                                                return_list_from_col='PatientID')
         counter = 0
         string_startingpoint = len(self.data_directory) + 1
         for root, dirs, files in os.walk(directory, topdown=True):
-            mrn = root[len(self.data_directory)+1:]
+            mrn = root[len(self.data_directory) + 1:]
             if (mrn in already_present) and (compute_only_missing is True):
-                log.info('Skipping Directory, PatientID already in database: '+str(mrn))
+                log.info('Skipping Directory, PatientID already in database: ' + str(mrn))
                 continue
 
             for name in files:
@@ -461,7 +501,7 @@ class pyconquest:
         :param: remove_after_store : determines if file is deleted after storing it ( default : FALSE )
         :param: sopinstance_as_filename : if set to True the sopuid will become the new filename ( default : FALSE )
          """
-        if  os.path.exists(directory_name):
+        if os.path.exists(directory_name):
             for root, dirs, files in os.walk(directory_name, topdown=True):
                 for name in files:
                     full_filename = os.path.join(root, name)
@@ -474,7 +514,7 @@ class pyconquest:
             log.error('Directory  : {} does not exist'.format(directory_name))
             return -1
 
-    def __extra_dicom_tags(self, ds,filename):
+    def __extra_dicom_tags(self, ds, filename):
         """Save some tags contained into the database
 
         :param: ds : dicom tags of a dicom file as read by pydicom.dcmread
@@ -499,7 +539,7 @@ class pyconquest:
                 returndict['UniqueFOR_UID'] = ''
 
             if self.__compute_hash:
-                #change the tags to make insensitive for anonimisation
+                # change the tags to make insensitive for anonimisation
                 ds.walk(self.__change_ReferencedSOPInstanceUID, recursive=True)
                 # hash only of contoursequence
                 returndict['hash'] = hashlib.md5(pickle.dumps(ds[0x3006, 0x0039].value)).hexdigest()
@@ -514,24 +554,49 @@ class pyconquest:
             FractionGroupSequence = ds[0x300a, 0x0070].value
             nr_fractions_list = []
             nr_beams_list = []
+            fraction_list_counter = 0
+            fractiongroupnumber_of_beamnumber = {}
+            per_fraction_beamnr_of_beamnumber = {}
             for FractionGroup in FractionGroupSequence:
+                # general info per fractiongroup
                 nr_fractions_list.append(FractionGroup[0x300a, 0x0078].value)
                 nr_beams_list.append(FractionGroup[0x300a, 0x0080].value)
+                # loop over all beams belonging to this group and store fractiongroup/beamnr in dicts
+                referenced_beam_list = FractionGroup[0x300c, 0x0004].value
+                per_fractiongroup_beamcounter = 0
+                for referenced_beam in referenced_beam_list:
+                    fractiongroupnumber_of_beamnumber[int(referenced_beam[0x300c, 0x0006].value)] = fraction_list_counter
+                    per_fraction_beamnr_of_beamnumber[int(referenced_beam[0x300c, 0x0006].value)] = per_fractiongroup_beamcounter
+                    per_fractiongroup_beamcounter = per_fractiongroup_beamcounter + 1
+                fraction_list_counter = fraction_list_counter + 1
 
             BeamSequence = ds[0x300a, 0x00b0].value
             Beam_properties_list = []
+            beamcounter = 0
+            string_with_beamMU = ''
             for Beam in BeamSequence:
-                Beam_properties_list.append([
-                    Beam[0x300a, 0x00c2].value,                     # beam name
-                    Beam[0x300a, 0x00c4].value,                     # beam type
-                    Beam[0x300a, 0x00c6].value,                     # radiation type
-                    Beam[0x300a, 0x00d0].value,                     # number of wedges
-                    Beam[0x300a, 0x0110].value,                     # number of Control Points
-                    Beam[0x300a, 0x0111][0][0x300a, 0x0114].value,  # energy of CP 0 of beam
-                    Beam[0x300a, 0x0111][0][0x300a, 0x011e].value   # gantry angle of CP 0 of beam
-                ])
+                try:
+                    fractiongroupnumber = fractiongroupnumber_of_beamnumber[beamcounter+1]
+                    per_fraction_beamnr = per_fraction_beamnr_of_beamnumber[beamcounter+1]
+                    Beam_properties_list.append([
+                        Beam[0x300a, 0x00c2].value,  # beam name
+                        Beam[0x300a, 0x00c4].value,  # beam type
+                        Beam[0x300a, 0x00c6].value,  # radiation type
+                        Beam[0x300a, 0x00d0].value,  # number of wedges
+                        Beam[0x300a, 0x0110].value,  # number of Control Points
+                        Beam[0x300a, 0x0111][0][0x300a, 0x0114].value,  # energy of CP 0 of beam
+                        Beam[0x300a, 0x0111][0][0x300a, 0x011e].value,  # gantry angle of CP 0 of beam
+                        ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][0x300a, 0x00084].value,  # beam Dose
+                        ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][0x300a, 0x00086].value  # beam MU
+                    ])
+                    string_with_beamMU += str(
+                        ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][
+                            0x300a, 0x00086].value) + '_'
+                except Exception as e:
+                    log.error('Error: "{}" when extracting individual beam data from RTPLAN file'.format(str(e)))
+                beamcounter = beamcounter + 1
 
-            #return only the value if there is only 1 FractionGroup, otherwise the list
+            # return only the value if there is only 1 FractionGroup, otherwise the list
             if len(nr_fractions_list) == 1:
                 returndict['Nfractions'] = nr_fractions_list[0]
             else:
@@ -549,12 +614,15 @@ class pyconquest:
 
             # RTPLAN has only the hash of the beam sequence
             if self.__compute_hash:
-                returndict['hash'] = hashlib.md5(pickle.dumps(ds[0x300a, 0x00b0].value)).hexdigest()
+                # create a string that contains beamMU and all cp info of the plan for hashing purpose
+                sequence_to_hash = string_with_beamMU + self.__rtplan_to_string(ds[0x300a, 0x00b0].value)
+                returndict['hash'] = hashlib.md5(pickle.dumps(sequence_to_hash)).hexdigest()
 
             try:
                 ReferencedSOPUID = ds[0x300c, 0x0060][0][0x0008, 0x1155].value
+                #ReferencedSOPUID = ds[0x0008, 0x1110][0][0x0008, 0x1155].value
                 returndict['ReferencedSOPUID'] = ReferencedSOPUID
-            except:
+            except Exception as e:
                 log.error('Error when extracting referenced_seriesuid of RTSTRUCT from RTPLAN file')
 
         elif dicomtype == 'RTDOSE':
@@ -569,8 +637,24 @@ class pyconquest:
 
         return returndict
 
+    def __rtplan_to_string(self, ds):
+        # converts beamsequence to a string that is hashable and should be identical for identical rtplans
+        string_to_hash = ''
+        for beam in ds:
+            try:
+                string_to_hash += str(beam[0x300a, 0x0110].value) + '_' # nr of cp of beam
+                for cp in beam[0x300a, 0x0111].value:
+                    string_to_hash += str(cp[0x300a, 0x011e].value) + '_'  # gantry
+                    string_to_hash += str(cp[0x300a, 0x0130].value) + '_'  # SSD of cp
+                    string_to_hash += str(cp[0x300a, 0x0134].value) + '_'  # cumulative meterset weight
+                    string_to_hash += str(cp[0x300a, 0x011a][0][0x300a, 0x011c].value) + '_'  #asymX
+                    string_to_hash += str(cp[0x300a, 0x011a][1][0x300a, 0x011c].value) + '_'  #asymY
+                    string_to_hash += str(cp[0x300a, 0x011a][2][0x300a, 0x011c].value)
+            except Exception as e:
+                log.error('Error: "{}" when concatenating rtplan info to string for hashing'.format(str(e)))
+        return string_to_hash
 
-    def __change_ReferencedSOPInstanceUID(self,ds,element):
+    def __change_ReferencedSOPInstanceUID(self, ds, element):
         if element.keyword == 'ReferencedSOPInstanceUID':
             ds.ReferencedSOPInstanceUID = ''
 
@@ -586,7 +670,7 @@ class pyconquest:
         if mrn is not None:
             if delete_files == True:
                 log.error('Cannot delete on mrn and physically delete the files')
-                return(-1)
+                return (-1)
             else:
                 self.execute_db_query(query='delete from dicomimages where imagepat="{}"'.format(mrn))
                 self.execute_db_query(query='delete from dicomseries where seriespat="{}"'.format(mrn))
@@ -594,19 +678,19 @@ class pyconquest:
                 self.execute_db_query(query='delete from dicompatients where PatientID="{}"'.format(mrn))
 
                 log.info('Deleted all database entries for patient {} from the database tables'.format(mrn))
-                return(1)
+                return (1)
 
         if query is not None:
             log.info('deleting series following query: {}'.format(query))
             result = self.execute_db_query(query)
             serieslist = [d['SeriesInst'] for d in result]
             self.delete_series(seriesuid=serieslist, delete_files=delete_files)
-            return()
+            return ()
 
-        if isinstance(seriesuid, list): #recursive call in case of list as input
+        if isinstance(seriesuid, list):  # recursive call in case of list as input
             for suid in seriesuid:
                 self.delete_series(seriesuid=suid, delete_files=delete_files)
-            return()
+            return ()
 
         # single seriesuid given
         else:
@@ -615,8 +699,8 @@ class pyconquest:
                             where dicomimages.seriesinst==\"{}\"".format(seriesuid)
 
             return_list = self.execute_db_query(file_query)
-            if(len(return_list) == 0):
-                log.info('no images found for this seriesuid : '+seriesuid)
+            if (len(return_list) == 0):
+                log.info('no images found for this seriesuid : ' + seriesuid)
                 return
 
             for row in return_list:
@@ -632,17 +716,17 @@ class pyconquest:
                 else:
                     log.error("The file you want to delete does not exist")
 
-                #delete dicomimage table entry
-                query='delete from dicomimages where ObjectFile="{}"'.format(row['ObjectFile'])
+                # delete dicomimage table entry
+                query = 'delete from dicomimages where ObjectFile="{}"'.format(row['ObjectFile'])
                 self.execute_db_query(query)
 
 
-            #delete dicomseries table entry
-            query='delete from dicomseries where seriesinst="{}"'.format(seriesuid)
+            # delete dicomseries table entry
+            query = 'delete from dicomseries where seriesinst="{}"'.format(seriesuid)
             self.execute_db_query(query)
 
-            #now delete the study entry in db if this is the last ...
-            query_for_remaining_series='select count(*) as nr from dicomseries where studyinsta="{}"'.format(studyuid)
+            # now delete the study entry in db if this is the last ...
+            query_for_remaining_series = 'select count(*) as nr from dicomseries where studyinsta="{}"'.format(studyuid)
             remaining_series = self.execute_db_query(query_for_remaining_series)
             if remaining_series[0]['nr'] == 0:
                 query = 'delete from dicomstudies where StudyInsta="{}"'.format(studyuid)
@@ -670,7 +754,7 @@ class pyconquest:
         """
 
         if not seriesuid is None:
-            if isinstance(seriesuid, list): #recursive call in case of list as input
+            if isinstance(seriesuid, list):  # recursive call in case of list as input
                 for suid in seriesuid:
                     self.copy_dicom_files_to_dest(seriesuid=suid, destination=destination,
                                                   CreateDir=CreateDir, UseSubDirectories=UseSubDirectories)
@@ -692,7 +776,7 @@ class pyconquest:
         if return_list and CreateDir:
             if not os.path.exists(destination):
                 os.makedirs(destination)
-                log.info("Directory "+destination+ " Created ")
+                log.info("Directory " + destination + " Created ")
 
         if not UseSubDirectories:
             for row in return_list:
@@ -714,7 +798,7 @@ class pyconquest:
     #   Below is the dicom communication part using pynetdicom
     #
 
-    def send_dicom(self, addres='127.0.0.1',port=5678, patientid='', seriesuid='',query='', ae_title=b'PYNETDICOM',
+    def send_dicom(self, addres='127.0.0.1', port=5678, patientid='', seriesuid='', query='', ae_title=b'PYNETDICOM',
                    sending_ae_title=b'pyconquest'):
         """Sends dicom files via the dicom protocol to a (remote) destination, select on patientid, seriesuid or query
 
@@ -735,7 +819,7 @@ class pyconquest:
             series_list = self.execute_db_query(query=query)
             log.info('Now sending using query: {}'.format(query))
             for it in series_list:
-                ser=it['SeriesInst']
+                ser = it['SeriesInst']
                 self.send_dicom(addres=addres, port=port, seriesuid=ser, ae_title=ae_title,
                                 sending_ae_title=sending_ae_title)
             return
@@ -789,10 +873,10 @@ class pyconquest:
             else:
                 log.error('Association aborted or never connected')
 
-    def __log_open_dcm_connection(self,event):
+    def __log_open_dcm_connection(self, event):
         """Print the remote's (host, port) when connected."""
         msg = 'Connected with remote (host, port) : {} : {}'.format(event.address, event.assoc.remote)
-        #msg = 'Connected with remote (host, port) : {} : {}'.format(event.address, event.assoc.ae.ae_title)
+        # msg = 'Connected with remote (host, port) : {} : {}'.format(event.address, event.assoc.ae.ae_title)
         log.info(msg)
 
     def start_dicom_listener(self, port=5678, write_to_database=True):
@@ -827,13 +911,13 @@ class pyconquest:
 
         :param: event : event from the listener"""
 
-        print('incoming event')
         # Decode the C-STORE request's *Data Set* parameter to a pydicom Dataset
         ds = event.dataset
 
         # Add the File Meta Information
         ds.file_meta = event.file_meta
         patientid = ds[0x0010, 0x0020].value
+        log.info('incoming DICOM communication event for patient : '+str(patientid))
 
         filename = "{}/{}/{}.dcm".format(self.data_directory, patientid, ds.SOPInstanceUID)
         path = "{}/{}".format(self.data_directory, patientid)
@@ -843,17 +927,158 @@ class pyconquest:
 
         # Save the dataset using the SOP Instance UID as the filename
         ds.save_as(filename, write_like_original=False)
-        print('dicom saved to file : ' + filename)
+        log.info('dicom saved to file : ' + filename)
 
         if self.__write_to_database_when_receiving_dicom_data is True:
-            ds2 = dcmread(filename)
-            c2 = pyconquest(database_filename=self.database_filename, data_directory=self.data_directory,loglevel='INFO')
+            #ds2 = dcmread(filename)
+            c2 = pyconquest(database_filename=self.database_filename, data_directory=self.data_directory,
+                            compute_hash=self.__compute_hash, loglevel='INFO')
             filename2 = "{}/{}".format(patientid, os.path.basename(filename))
-            c2.write_tags(ds2, filename2)
+            c2.write_tags(ds, filename2)
             c2.close_db()
 
         # Return a 'Success' status
         return 0x0000
+
+    def query_dicom(self, addres='127.0.0.1', port=5678, ae_title='', patientid='', modality='', sending_ae_title=b'PYCONQUEST'):
+        """Queries a dicom server using C-FIND
+                :param: addres : IP addres of dicom server where the query is done to
+                :param: port : portnumber of dicom server where the query is done to
+                :param: ae_title : ae title of dicom server where the query is done to
+                :param: patientid : patientid, to query only for this patient
+                :param: modality : modality (RTPLAN,RTSTRUCT etc. ) to query only for specific modality
+                :param: sending_ae_title : ae title of this node ( the requesting node )
+
+                returns a list of dicts of the response
+                """
+
+        log.info('starting DICOM query (C-FIND) on port : ' + str(port) + ' of server : ' + str(addres))
+
+        ae = AE(ae_title=sending_ae_title)
+        ae.add_requested_context(PatientRootQueryRetrieveInformationModelFind)
+
+        # Create our Identifier (query) dataset
+        ds1 = dataset.Dataset()
+        ds1.QueryRetrieveLevel = 'SERIES'
+        ds1.PatientID = str(patientid)
+        # adding empty items to the dataset makes that they are returned in the data
+        ds1.SOPClassesInStudy = ''
+        ds1.StudyInstanceUID = ''
+        ds1.SeriesInstanceUID = ''
+        ds1.Modality = modality
+        ds1.StudyDate = ''
+        ds1.StudyTime = ''
+        ds1.SeriesDescription = ''
+        ds1.StudyDescription = ''
+        ds1.PatientBirthDate = ''
+        ds1.StudyID = ''
+        ds1.FrameOfReferenceUID = ''
+
+        response_list = []
+        response_counter = 0
+        assoc = ae.associate(addres, port, ae_title=ae_title)
+        if assoc.is_established:
+            responses = assoc.send_c_find(ds1, PatientRootQueryRetrieveInformationModelFind)
+            for (status, identifier) in responses:
+                mydict = {}
+                if status:
+                    if status.Status not in [65280, 0]:  # these are normal statusses during transfer or at the end
+                        log.error('C-GET query status: '.format(status.Status))
+
+                    if identifier is not None:
+                        mydict = {}
+                        for item in identifier:
+                            mydict.update({item.keyword: item.value})
+                else:
+                    log.error('Connection timed out, was aborted or received invalid response')
+                if not mydict == {}:
+                    response_list.append(mydict)
+                    response_counter = response_counter + 1
+            # Release the association
+            assoc.release()
+        else:
+            log.error('Association rejected, aborted or never connected')
+
+        log.info('DICOM C-FIND query returned {} response(s)'.format(response_counter))
+        return response_list
+
+    def get_dicom(self, addres='127.0.0.1', port=5678, ae_title='',
+                patientid='', modality='', series_uid='', sop_instance_uid='',
+                receiving_ae_title='PYCONQUEST', receiving_ip='', receiving_port_number=5699,
+                association_timeout=60, sending_to_my_own_scp=True, unrestricted_storage=True):
+
+        """Queries a dicom server using C-MOVE
+                :param: addres : IP addres of dicom server where the query is done to
+                :param: port : portnumber of dicom server where the query is done to
+                :param: ae_title : ae title of dicom server where the query is done to
+
+                :param: receiving_ae_title : ae title of node that is spun up on this machine to receive the data
+                :param: receiving_ip : ip of node that is spun up on this machine to receive the data
+                :param: receiving_port : port of node that is spun up on this machine to receive the data
+
+                :param: patientid : patientid of data to get
+                :param: modality : modality to get (RTPLAN,RTSTRUCT etc.)
+                :param: series_uid : series UID of data to get
+                :param: sop_instance_uid : sop instance UID of data to get
+
+                :param: association_timeout : timeout in seconds to wait for the response, RTSTRUCT can be slow
+                :param: sending_to_my_own_scp, if true (default) spin up your own receiving SCP to receive data
+                :param: unrestricted_storage if true : allow all data to be received
+
+                """
+
+        log.info('Starting querying for C-MOVE on SCP server {}/{}/{}'.format(ae_title, addres, port))
+
+        #needed for instance to get RTPLANs from Eclipse into the system
+        if unrestricted_storage:
+            pynetdicom._config.UNRESTRICTED_STORAGE_SERVICE = True
+
+        # spin up my own SCP to receive the data if requested
+        if sending_to_my_own_scp:
+            ae2 = AE()
+            ae2.supported_contexts = AllStoragePresentationContexts
+            ae2.maximum_pdu_size = 0
+            handlers = [(evt.EVT_C_STORE, self.handle_dicom_store_request)]
+            scp = ae2.start_server((receiving_ip, receiving_port_number), ae_title=receiving_ae_title,
+                                   block=False, evt_handlers=handlers)
+
+            log.info('This SCP server should have ae_title : {} defined with [ip of (this) localhost]/{}'
+                     .format(receiving_ae_title, receiving_port_number))
+
+        # Create our Identifier (query) dataset
+        ds1 = dataset.Dataset()
+        ds1.QueryRetrieveLevel = 'SERIES'
+        ds1.PatientID = str(patientid)
+        ds1.Modality = modality
+        ds1.SeriesInstanceUID = series_uid
+        ds1.SOPInstanceUID = sop_instance_uid
+
+        # create request
+        ae = AE(ae_title='PYCONQUEST')
+        ae.add_requested_context(PatientRootQueryRetrieveInformationModelMove)
+        ae.supported_contexts = AllStoragePresentationContexts
+
+        assoc = ae.associate(addres, port, ae_title=ae_title)
+        assoc.acse_timeout = association_timeout
+        assoc.dimse_timeout = association_timeout
+        assoc.network_timeout = association_timeout
+        if assoc.is_established:
+            log.info('Will send C-MOVE request to send from {}/{} to {}'.format(addres, port,
+                                                                                   receiving_ae_title))
+            responses = assoc.send_c_move(ds1, receiving_ae_title, PatientRootQueryRetrieveInformationModelMove)
+            for (status, identifier) in responses:
+                if status:
+                    if status.Status not in [65280, 0]:  # these are normal statusses during transfer or at the end
+                        log.error('C-MOVE query status: 0x{0:04x}'.format(status.Status))
+                else:
+                    log.error('Connection timed out, was aborted or received invalid response')
+            # Release the association
+            assoc.release()
+        else:
+            log.error('Association rejected, aborted or never connected')
+        if sending_to_my_own_scp:
+            scp.shutdown()
+        return
 
     #
     # examine database
@@ -873,7 +1098,7 @@ class pyconquest:
                 ",(select count(*) from dicomseries where seriespat=patientid and modality=\'CT\') as nrCT" \
                 ",(select count(*) from dicomseries where seriespat=patientid and modality=\'MR\') as nrMR" \
                 ",(select count(*) from dicomseries where seriespat=patientid and modality=\'PT\') as nrPT" \
-                ",(select count(*) from dicomseries where seriespat=patientid and modality=\'RTSTRUCT\') as nrRTSTRUCT"\
+                ",(select count(*) from dicomseries where seriespat=patientid and modality=\'RTSTRUCT\') as nrRTSTRUCT" \
                 ",(select count(*) from dicomseries where seriespat=patientid and modality=\'RTDOSE\') as nrRTDOSE" \
                 ",(select count(*) from dicomseries where seriespat=patientid and modality=\'RTPLAN\') as nrRTPLAN" \
                 " from dicompatients order by {}".format(orderby)
@@ -881,19 +1106,20 @@ class pyconquest:
 
         if print_summary:
             print('    PatientID    nrCT nrMR  nrPT nrRTSTRUCT nrRTDOSE nrRTPLAN')
-            rowcount=0
+            rowcount = 0
             for r in result:
-                rowcount=rowcount+1
+                rowcount = rowcount + 1
                 print('{}{}{}{}{}{}{}{}'.format(str(rowcount).ljust(5),
-                    r['PatientID'].ljust(14),
-                    str(r['nrCT']).ljust(5),
-                    str(r['nrMR']).ljust(5),
-                    str(r['nrPT']).ljust(8),
-                    str(r['nrRTSTRUCT']).ljust(10),
-                    str(r['nrRTDOSE']).ljust(10),
-                    str(r['nrRTPLAN']).ljust(8)))
+                                                r['PatientID'].ljust(14),
+                                                str(r['nrCT']).ljust(5),
+                                                str(r['nrMR']).ljust(5),
+                                                str(r['nrPT']).ljust(8),
+                                                str(r['nrRTSTRUCT']).ljust(10),
+                                                str(r['nrRTDOSE']).ljust(10),
+                                                str(r['nrRTPLAN']).ljust(8)))
 
         return result
+
     # some utility functions that are handy to have in the base class
 
     def dump_data_to_csv(self, query=None, table='dicomseries', filename_dict=None, filename='query_dump.csv'):
@@ -908,7 +1134,7 @@ class pyconquest:
         :param filename: a string defining the filename when using the query mode : default : 'query_dump.csv'
         :return None:
         """
-        if isinstance(table,list):
+        if isinstance(table, list):
             for t in table:
                 self.dump_data_to_csv(table=t, filename_dict=filename_dict)
             return
@@ -955,7 +1181,7 @@ class pyconquest:
             query = "select count(*) as N_slices," \
                     "min(CAST(slicelocat as float)) as min_sliceposition, " \
                     "max(CAST(slicelocat as float)) as max_sliceposition, " \
-                    "abs(min(CAST(slicelocat as float))-max(CAST(slicelocat as float))) as ScanRange, "\
+                    "abs(min(CAST(slicelocat as float))-max(CAST(slicelocat as float))) as ScanRange, " \
                     "max(CAST(slicethick as float)) as SliceThickness " \
                     "from dicomimages as di where di.SeriesInst='{}'".format(seriesinst)
             result = self.execute_db_query(query)
@@ -970,7 +1196,8 @@ class pyconquest:
                 CAST(d2.slicelocat as float)>CAST(d1.slicelocat as float))-CAST(d1.slicelocat as float) as diff_to_next_slicelocat
                 from dicomimages as d1 where d1.SeriesInst='{}' order by CAST(d1.slicelocat as float)
             """.format(seriesinst)
-            result2 = self.execute_db_query(query_for_slicedistance_consistency, return_list_from_col='diff_to_next_slicelocat')
+            result2 = self.execute_db_query(query_for_slicedistance_consistency,
+                                            return_list_from_col='diff_to_next_slicelocat')
             # leave only unique values and remove the None-s (last slice has no slice distance to next slice ...
             result2 = [i for i in result2 if i is not None]
             result2 = [round(float(num), 1) for num in result2]
@@ -990,7 +1217,7 @@ class pyconquest:
 
         return seriesinst_with_inconsistent_slicedistances
 
-    def set_roi_filter(self, exclude=[''], include=[''],roi_filter_flags=re.IGNORECASE):
+    def set_roi_filter(self, exclude=[''], include=[''], roi_filter_flags=re.IGNORECASE):
         """sets the exclude and include filters for the roi names
 
         :param: exclude : string or list of strings, each describing and exclusion
@@ -1001,16 +1228,18 @@ class pyconquest:
         """
         # if only a string is given, put it in a list
         if isinstance(exclude, str):
-            exclude=[exclude]
+            exclude = [exclude]
         if isinstance(include, str):
             include = [include]
 
         self.exclude_filter = exclude
         self.include_filter = include
         self.roi_filter_flags = roi_filter_flags
-        log.info('Filtervalues :  include: {} ; exclude {} ; flags : {}'.format(self.include_filter,self.exclude_filter,str(self.roi_filter_flags)))
+        log.info(
+            'Filtervalues :  include: {} ; exclude {} ; flags : {}'.format(self.include_filter, self.exclude_filter,
+                                                                           str(self.roi_filter_flags)))
 
-    def filter_roinames(self, roinames ):
+    def filter_roinames(self, roinames):
         """Drops all roinames in the list exclude_patterns, then only includes the ones in list include_patterns
         use the set_roifilter method to set the filter parameters
 
@@ -1090,7 +1319,7 @@ class pyconquest:
             )
         where modality in ('RTDOSE','RTPLAN')
         """
-        self.execute_db_query(query_to_fill_Referenced_for_RTDOSE)
+        #self.execute_db_query(query_to_fill_Referenced_for_RTDOSE)
         log.info('postprocessing of database done')
 
     #
@@ -1117,12 +1346,12 @@ class pyconquest:
                     log.error('tag {} not in file : {}'.format(tag, filename))
                     return -1
 
-            if isinstance(tag,tuple):
+            if isinstance(tag, tuple):
                 if tag in ds:
                     ds[tag].value = new_value
                     log.info('now saving : {} with {} changed to {}'.format(filename, tag, new_value))
                 elif create:
-                    ds.add_new(tag,'LT',new_value) #LO is long string(64 char max), LT is long text (10240 mx)
+                    ds.add_new(tag, 'LT', new_value)  # LO is long string(64 char max), LT is long text (10240 mx)
                     log.info('now created : {} with {} changed to {}'.format(filename, tag, new_value))
                 else:
                     log.error('element {} not found, set create=True to create the tag'.format(tag))
@@ -1150,13 +1379,13 @@ class pyconquest:
                 studyuid = [studyuid]
             if seriesuid is not None:
                 query = 'select ObjectFile from dicomimages where seriesinst="{}"'
-                uidlist=seriesuid
+                uidlist = seriesuid
                 log.info('creating filelist derived from seriesuid or list of seriesuids')
             else:
                 query = '''select di.ObjectFile from dicomimages as di
                             inner join dicomseries as ds on di.seriesinst=ds.seriesinst
                             where ds.studyinsta="{}"'''
-                uidlist=studyuid
+                uidlist = studyuid
                 log.info('creating filelist derived from studyuid or list of studyuids')
 
             returnlist = []
@@ -1170,11 +1399,11 @@ class pyconquest:
     def change_all_tags(self, filename=None, seriesuid=None, studyuid=None,
                         tag='PatientBirthDate', new_value='19000101', create=False):
 
-        list_of_filenames = self.get_list_of_filenames(filename=filename, seriesuid=seriesuid,studyuid=studyuid)
+        list_of_filenames = self.get_list_of_filenames(filename=filename, seriesuid=seriesuid, studyuid=studyuid)
         for fn in list_of_filenames:
             self.change_tag(filename=fn, tag=tag, new_value=new_value, create=create)
 
-    def modify_rtstruct(self,filename,mode,roiname,newname='', write_file=False, delete_points=False):
+    def modify_rtstruct(self, filename, mode, roiname, newname='', write_file=False, delete_points=False):
         ''' Modifies an rtstruct file by changing or deleting roi's
 
         :param filename: filename of file to process
@@ -1186,20 +1415,20 @@ class pyconquest:
         :param delete_points: defines wether to delete points in the leave mode ( default False )
         :return: pydicom dataset
         '''
-        if mode not in ['leave','change','delete']:
+        if mode not in ['leave', 'change', 'delete']:
             log.error('mode {} not known, choose from : change,leave or delete'.format(mode))
             return
 
         # check consistency of old/new names
         if len(roiname) != len(newname) and mode == 'change':
-            log.error('Lengths of roiname and newname are not equal : {} // {}'.format(roiname,newname))
+            log.error('Lengths of roiname and newname are not equal : {} // {}'.format(roiname, newname))
             return -1
 
         # if the filename is a list, do a recursive call to this same routine with every element of the list
         if isinstance(filename, list):
             for fn in filename:
                 self.modify_rtstruct(filename=fn, mode=mode, roiname=roiname, newname=newname,
-                                          write_file=write_file,delete_points=delete_points)
+                                     write_file=write_file, delete_points=delete_points)
             return -1
 
         try:
@@ -1230,7 +1459,7 @@ class pyconquest:
                     for i in contourindices_to_delete:
                         roitype = ds[0x3006, 0x0039][i - shift][0x3006, 0x0040][0][0x3006, 0x0042].value
                         roiname = ds[0x3006, 0x0020][i - shift][0x3006, 0x0026].value
-                        if not ((str(roitype) == 'POINT' and delete_points == False ) and mode == 'leave'):
+                        if not ((str(roitype) == 'POINT' and delete_points == False) and mode == 'leave'):
                             log.info('deleting: {} of type {}'.format(roiname, str(roitype)))
                             del ds[0x3006, 0x0020].value[i - shift]
                             del ds[0x3006, 0x0039].value[i - shift]
@@ -1245,6 +1474,7 @@ class pyconquest:
 
         except Exception as e:
             log.error('Error {} file : {} '.format(str(e), filename))
+
     #
     # default database format
     #

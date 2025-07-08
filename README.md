@@ -185,8 +185,47 @@ c.start_dicom_listener(port=5678)
 c.start_dicom_listener(port=104, write_to_database=False)
 ```
 
+### DICOM query to a dicom node via C-FIND
+
+```
+from pyconquest import pyconquest
+
+c=pyconquest(data_directory='data2')
+response_list = c.query_dicom(patientid='1313131313', addres='10.11.12.133', port=5678, modality='RTPLAN')
+print(response_list) #this is a list of dicts with various predefined tags included in the dict
+```
+
+### Get a dicom file from a dicom node using  C-MOVE
+
+What this routine does is it 'spins up' a receiver process and then instructs the dicom node via a C-MOVE 
+instruction to send data back to this receiver / the caller
+
+Note1 : The transfer is slow, so preferably only use on single files ( not CT/MR )\
+Note2 : the SCP should know the destination (to return the data to).\
+The default destination when sending back to the 'caller' should be : (PYCONQUEST,[ip of current machine],5699)
 
 
+```
+from pyconquest import pyconquest
+
+c=pyconquest(data_directory='data2')
+response_list = c.query_dicom(patientid='1313131313', addres='10.11.12.133', port=5678, modality='RTPLAN')
+for response in response_list:
+    c.get_dicom(addres='10.11.12.133', port=5678, series_uid=response['SeriesInstanceUID'])
+```
+####variations:
+
+You can change the receiving portnumber by using : receiving_port=12345 in case of port conflicts\
+You can also send to another destination than 'yourself' by defining receiving_ae_title='PACS_C'
+
+```
+# use another portnumber than 5699 in case of port conflicts
+c.get_dicom(addres='10.11.12.133', port=5678, receiving_port=12345, series_uid=response['SeriesInstanceUID'])
+
+# Let A (yourself) make B send data to C using C-MOVE
+c.get_dicom(addres='10.11.12.133', port=5678, receiving_aetitle='PACS_C', series_uid=response['SeriesInstanceUID'])
+# here 10.11.12.133/5678 = PACS_B and it sends to PACS_C. PACS_B should know the ip/port of PACS_C for this to work
+```
 ## Copying files of a series on the disk to another directory
 #### by seriesuid or list of seriesuids
 ```
@@ -252,6 +291,24 @@ c.modify_rtstruct(filename='tst.dcm',mode='leave',roiname=['Lung_R','Lung_L'],wr
 # and filename can be a list of filenames
 c.modify_rtstruct(filename=['tst.dcm','tst2.dcm'],mode='leave',roiname=['Lung_R','Lung_L'],write_file=True,delete_points=True)
 ```
+
+## Load data from a .csv file into a database table
+
+A routine to load a csv file as a single table into the sqlite database
+
+- First line of the csv file should hold the column names
+- A database table is created if non-existing
+- Column names can be converted before becoming database column names by adding the key_translation parameter
+```
+from pyconquest import pyconquest
+
+c=pyconquest()
+c.load_csv_to_table('Mosaiq.csv', 'Mosaiq',delimiter=';')
+
+# below with conversion of column names
+c.load_csv_to_table('Mosaiq.csv', 'Mosaiq', key_translation={'aantal fracties':'aantal_fracties','A':'B'})
+
+```
 ## Definition of the database structure
 The database can be defined using various ways
 - If a file dicom.sql exist that file is used
@@ -277,6 +334,13 @@ twine upload dist/*
 ```
 
 # CHANGELOG
+### version 0.1.5
+
+- For RTPLAN, extra beaminfo is saved to the column DicomImages.ElementList.  Full data is now:  
+[BeamName, BeamType, RadType, #Wedges, #CP, Energy CP[0], Angle CP[0], BeamDose, BeamMU]
+- Added method : query_dicom() where a C_FIND query can be done of a dicom node. The result is a list of dicts of predefined tags
+- Added method : get_dicom() where a dicom object can be retrieved via C_MOVE protocol
+- Added method : load_csv_to_table() to read a csv file direcly to a SQLite table
 
 ### version 0.1.4
 - For RTPLAN, beam information is saved in the column DicomImages.ElementList
