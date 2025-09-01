@@ -22,7 +22,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 
 log = logging.getLogger(__name__)
-LOGFORMAT = "%(levelname)s %(asctime)s [%(filename)-15s:%(lineno)-4s][%(funcName)-30s]\t%(message)s"
+LOGFORMAT = "%(levelname)-5s %(asctime)s [%(filename)-15s:%(lineno)-4s][%(funcName)-30s]\t%(message)s"
 log.setLevel(logging.ERROR)
 
 ch = logging.StreamHandler(sys.stderr)
@@ -188,20 +188,21 @@ class pyconquest:
                 """
         try:
             with open(filename, 'r') as f:
-                    dict_reader = csv.DictReader(f, delimiter=delimiter)
-                    list_of_dict = list(dict_reader)
-                    nrows = 1
-                    for row in list_of_dict:
-                        for key, value in key_translation.items():
-                            if key in row.keys():
-                                row[value] = row[key]
-                                del row[key]
-                            else:
-                                log.info("Trying to replace '{}' but this key is not found".format(key))
-                        self.insert_dict(tablename, row)
-                        nrows = nrows + 1
+                dict_reader = csv.DictReader(f, delimiter=delimiter)
+                list_of_dict = list(dict_reader)
+                nrows = 1
+                for row in list_of_dict:
+                    filtered_row = {k: v.replace('"', '') for k, v in row.items()}
+                    for key, value in key_translation.items():
+                        if key in filtered_row.keys():
+                            filtered_row[value] = filtered_row[key]
+                            del filtered_row[key]
+                        else:
+                            log.info("Trying to replace '{}' but this key is not found".format(key))
+                    self.insert_dict(tablename, filtered_row)
+                    nrows = nrows + 1
 
-                    log.info("Read file : {} and inserted {} rows".format(filename, nrows))
+                log.info("Read file : {} and inserted {} rows".format(filename, nrows))
         except FileNotFoundError:
             log.error("Could not find file: {}, Please check the file path.".format(filename))
 
@@ -335,8 +336,14 @@ class pyconquest:
         for item in self.__db_design[tablename]:
             try:
                 elem = ds[item[0], item[1]]
-                val = elem.value
-            except Exception:
+                if len(item) == 6:
+                    val = elem[item[3]][(item[4], item[5])].value
+                elif len(item) == 9:
+                    print('nine')
+                    val = elem[item[3]][(item[4], item[5])][item[6]][(item[7],item[8])].value
+                else:
+                    val = elem.value
+            except Exception :
                 val = ''
             tabledict[item[2].replace('\"', '')] = val
         return tabledict
@@ -637,6 +644,26 @@ class pyconquest:
 
         return returndict
 
+    def read_single_tag(self, filename='', tag=None):
+        """" simple functionality to read a single tag from a dicom file
+
+        :param: filename: filename to read from
+        :param tag : tag to read in the format of a tuple : default is : ('0x3253', '1000')
+        :returns : tag value as a string
+         """
+
+        if tag is None:
+            tag = ('0x3253', '1000') # example : private tag in varian RTPLAN
+        ds = dcmread(filename)
+        log.info('Reading tag {} from file : {}'.format(tag, filename))
+        try:
+            elem = ds[tag]
+            val = elem.value
+        except Exception as e:
+            val = ''
+            print('exception encountered:'+str(e))
+        return val
+
     def __rtplan_to_string(self, ds):
         # converts beamsequence to a string that is hashable and should be identical for identical rtplans
         string_to_hash = ''
@@ -933,6 +960,7 @@ class pyconquest:
             #ds2 = dcmread(filename)
             c2 = pyconquest(database_filename=self.database_filename, data_directory=self.data_directory,
                             compute_hash=self.__compute_hash, loglevel='INFO')
+            c2.__db_design = self.__db_design
             filename2 = "{}/{}".format(patientid, os.path.basename(filename))
             c2.write_tags(ds, filename2)
             c2.close_db()
@@ -1005,6 +1033,7 @@ class pyconquest:
     def get_dicom(self, addres='127.0.0.1', port=5678, ae_title='',
                 patientid='', modality='', series_uid='', sop_instance_uid='',
                 receiving_ae_title='PYCONQUEST', receiving_ip='', receiving_port_number=5699,
+                requesting_ae_title='PYCONQUEST',
                 association_timeout=60, sending_to_my_own_scp=True, unrestricted_storage=True):
 
         """Queries a dicom server using C-MOVE
@@ -1016,6 +1045,8 @@ class pyconquest:
                 :param: receiving_ip : ip of node that is spun up on this machine to receive the data
                 :param: receiving_port : port of node that is spun up on this machine to receive the data
 
+                :param: requesting_ae_title : ae title of node that is requesting the MOVE (default PYCONQUEST)
+
                 :param: patientid : patientid of data to get
                 :param: modality : modality to get (RTPLAN,RTSTRUCT etc.)
                 :param: series_uid : series UID of data to get
@@ -1026,6 +1057,12 @@ class pyconquest:
                 :param: unrestricted_storage if true : allow all data to be received
 
                 """
+
+        # Test if there is a sensible query, to prevent querying too much which can 'hang' the SCP
+        if len(patientid) < 4 and len(series_uid) < 4 and len(sop_instance_uid) < 4:
+            log.error('PatientID AND SeriesUID AND SopInstanceUID are not valid (< 4 char:so too short). '
+                      'Query will not be executed')
+            return
 
         log.info('Starting querying for C-MOVE on SCP server {}/{}/{}'.format(ae_title, addres, port))
 
@@ -1054,7 +1091,7 @@ class pyconquest:
         ds1.SOPInstanceUID = sop_instance_uid
 
         # create request
-        ae = AE(ae_title='PYCONQUEST')
+        ae = AE(ae_title=requesting_ae_title)
         ae.add_requested_context(PatientRootQueryRetrieveInformationModelMove)
         ae.supported_contexts = AllStoragePresentationContexts
 

@@ -201,9 +201,9 @@ What this routine does is it 'spins up' a receiver process and then instructs th
 instruction to send data back to this receiver / the caller
 
 Note1 : The transfer is slow, so preferably only use on single files ( not CT/MR )\
-Note2 : the SCP should know the destination (to return the data to).\
-The default destination when sending back to the 'caller' should be : (PYCONQUEST,[ip of current machine],5699)
-
+Note2 : The SCP should know the destination (to return the data to).\
+The default destination when sending back to the 'caller' should be : (PYCONQUEST,[ip of current machine],5699)\
+Note3 : You can set the AE title of the requesting node with parameter : requesting_ae_title
 
 ```
 from pyconquest import pyconquest
@@ -324,6 +324,17 @@ c=pyconquest(sql_inifile_name='dicom.sql',loglevel='INFO')
 c.add_column_to_database(tablename='DICOMpatients',column_definition=['0x0020', '0x000d', 'StudyInst'])
 c.create_standard_dicom_tables()
 ````
+since version 0.1.6 it is possible to load nested tags, for instance the beamdose of the first two beams of a RTPLAN:
+````
+from pyconquest import pyconquest
+
+c=pyconquest(sql_inifile_name='dicom.sql',loglevel='INFO')
+c.add_column_to_database(tablename='DICOMimages',
+    column_definition=['0x300a','0x0070','BeamDose0', 0, '0x300c', '0x0004',0,'0x300a','0x0084'])
+c.add_column_to_database(tablename='DICOMimages',
+    column_definition=['0x300a','0x0070','BeamDose1', 0, '0x300c', '0x0004',1,'0x300a','0x0084'])
+c.create_standard_dicom_tables()
+````
 
 the .sql files are compatible with the original Conquest file format
 
@@ -331,9 +342,26 @@ the .sql files are compatible with the original Conquest file format
 ```
 python setup.py sdist
 twine upload dist/*
+or:
+twine upload --config-file ./.pypirc dist/pyconquest-0.1.5.tar.gz
+wherre .pypirc looks like: (where you should include pypi- with the password)
+
+[pypi]
+username = __token__
+password = pypi-<a very long token you can get from the pypi page under account settings>
+
 ```
 
 # CHANGELOG
+### version 0.1.6
+
+
+- Fixed bug where when receiving data via dicom, the added columns were not filled
+- Added option to read nested tags into the database
+- Added option to define the AE title of the requesting node in get_dicom()
+- load_csv_to_table() can now handle quotes in the data field
+- Added method : read_single_tag() to read a single tag from a single file (returns string)
+
 ### version 0.1.5
 
 - For RTPLAN, extra beaminfo is saved to the column DicomImages.ElementList.  Full data is now:  
