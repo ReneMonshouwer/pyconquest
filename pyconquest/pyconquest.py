@@ -13,7 +13,7 @@ from pynetdicom.sop_class import (
     PatientRootQueryRetrieveInformationModelMove,
     CTImageStorage
 )
-#import pkg_resources
+# import pkg_resources
 import hashlib
 import pickle
 import time
@@ -56,7 +56,7 @@ class pyconquest:
     __write_to_database_when_receiving_dicom_data = True
     __instance_creation_time = ''
     try:
-        #__version__ = pkg_resources.get_distribution("pyconquest").version
+        # __version__ = pkg_resources.get_distribution("pyconquest").version
         __version__ = 'Unknown'
     except:
         __version__ = 'Unknown'
@@ -339,11 +339,10 @@ class pyconquest:
                 if len(item) == 6:
                     val = elem[item[3]][(item[4], item[5])].value
                 elif len(item) == 9:
-                    print('nine')
-                    val = elem[item[3]][(item[4], item[5])][item[6]][(item[7],item[8])].value
+                    val = elem[item[3]][(item[4], item[5])][item[6]][(item[7], item[8])].value
                 else:
                     val = elem.value
-            except Exception :
+            except Exception:
                 val = ''
             tabledict[item[2].replace('\"', '')] = val
         return tabledict
@@ -535,7 +534,7 @@ class pyconquest:
             contournamelist = []
             FrameOfReferenceUID_List = []
             for c in contours:
-                contournamelist.append(c[0x3006, 0x0026].value)
+                contournamelist.append(str(c[0x3006, 0x0026].value).replace("'", ''))
                 FrameOfReferenceUID_List.append(c[0x3006, 0x0024].value)
             unique_frame_of_ref = list(set(FrameOfReferenceUID_List))
             returndict['ElementList'] = contournamelist
@@ -572,8 +571,10 @@ class pyconquest:
                 referenced_beam_list = FractionGroup[0x300c, 0x0004].value
                 per_fractiongroup_beamcounter = 0
                 for referenced_beam in referenced_beam_list:
-                    fractiongroupnumber_of_beamnumber[int(referenced_beam[0x300c, 0x0006].value)] = fraction_list_counter
-                    per_fraction_beamnr_of_beamnumber[int(referenced_beam[0x300c, 0x0006].value)] = per_fractiongroup_beamcounter
+                    fractiongroupnumber_of_beamnumber[
+                        int(referenced_beam[0x300c, 0x0006].value)] = fraction_list_counter
+                    per_fraction_beamnr_of_beamnumber[
+                        int(referenced_beam[0x300c, 0x0006].value)] = per_fractiongroup_beamcounter
                     per_fractiongroup_beamcounter = per_fractiongroup_beamcounter + 1
                 fraction_list_counter = fraction_list_counter + 1
 
@@ -583,8 +584,8 @@ class pyconquest:
             string_with_beamMU = ''
             for Beam in BeamSequence:
                 try:
-                    fractiongroupnumber = fractiongroupnumber_of_beamnumber[beamcounter+1]
-                    per_fraction_beamnr = per_fraction_beamnr_of_beamnumber[beamcounter+1]
+                    fractiongroupnumber = fractiongroupnumber_of_beamnumber[beamcounter + 1]
+                    per_fraction_beamnr = per_fraction_beamnr_of_beamnumber[beamcounter + 1]
                     Beam_properties_list.append([
                         Beam[0x300a, 0x00c2].value,  # beam name
                         Beam[0x300a, 0x00c4].value,  # beam type
@@ -593,8 +594,10 @@ class pyconquest:
                         Beam[0x300a, 0x0110].value,  # number of Control Points
                         Beam[0x300a, 0x0111][0][0x300a, 0x0114].value,  # energy of CP 0 of beam
                         Beam[0x300a, 0x0111][0][0x300a, 0x011e].value,  # gantry angle of CP 0 of beam
-                        ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][0x300a, 0x00084].value,  # beam Dose
-                        ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][0x300a, 0x00086].value  # beam MU
+                        ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][
+                            0x300a, 0x00084].value,  # beam Dose
+                        ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][
+                            0x300a, 0x00086].value  # beam MU
                     ])
                     string_with_beamMU += str(
                         ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][
@@ -627,7 +630,7 @@ class pyconquest:
 
             try:
                 ReferencedSOPUID = ds[0x300c, 0x0060][0][0x0008, 0x1155].value
-                #ReferencedSOPUID = ds[0x0008, 0x1110][0][0x0008, 0x1155].value
+                # ReferencedSOPUID = ds[0x0008, 0x1110][0][0x0008, 0x1155].value
                 returndict['ReferencedSOPUID'] = ReferencedSOPUID
             except Exception as e:
                 log.error('Error when extracting referenced_seriesuid of RTSTRUCT from RTPLAN file')
@@ -647,13 +650,13 @@ class pyconquest:
     def read_single_tag(self, filename='', tag=None):
         """" simple functionality to read a single tag from a dicom file
 
-        :param: filename: filename to read from
+        :param filename: filename to read from
         :param tag : tag to read in the format of a tuple : default is : ('0x3253', '1000')
         :returns : tag value as a string
          """
 
         if tag is None:
-            tag = ('0x3253', '1000') # example : private tag in varian RTPLAN
+            tag = ('0x3253', '1000')  # example : private tag in varian RTPLAN
         ds = dcmread(filename)
         log.info('Reading tag {} from file : {}'.format(tag, filename))
         try:
@@ -661,7 +664,7 @@ class pyconquest:
             val = elem.value
         except Exception as e:
             val = ''
-            print('exception encountered:'+str(e))
+            print('exception encountered:' + str(e))
         return val
 
     def __rtplan_to_string(self, ds):
@@ -669,16 +672,16 @@ class pyconquest:
         string_to_hash = ''
         for beam in ds:
             try:
-                string_to_hash += str(beam[0x300a, 0x0110].value) + '_' # nr of cp of beam
+                string_to_hash += str(beam[0x300a, 0x0110].value) + '_'  # nr of cp of beam
                 for cp in beam[0x300a, 0x0111].value:
                     string_to_hash += str(cp[0x300a, 0x011e].value) + '_'  # gantry
                     string_to_hash += str(cp[0x300a, 0x0130].value) + '_'  # SSD of cp
                     string_to_hash += str(cp[0x300a, 0x0134].value) + '_'  # cumulative meterset weight
-                    string_to_hash += str(cp[0x300a, 0x011a][0][0x300a, 0x011c].value) + '_'  #asymX
-                    string_to_hash += str(cp[0x300a, 0x011a][1][0x300a, 0x011c].value) + '_'  #asymY
+                    string_to_hash += str(cp[0x300a, 0x011a][0][0x300a, 0x011c].value) + '_'  # asymX
+                    string_to_hash += str(cp[0x300a, 0x011a][1][0x300a, 0x011c].value) + '_'  # asymY
                     string_to_hash += str(cp[0x300a, 0x011a][2][0x300a, 0x011c].value)
             except Exception as e:
-                log.error('Error: "{}" when concatenating rtplan info to string for hashing'.format(str(e)))
+                log.info('Error: "{}" when concatenating rtplan info to string for hashing'.format(str(e)))
         return string_to_hash
 
     def __change_ReferencedSOPInstanceUID(self, ds, element):
@@ -747,7 +750,6 @@ class pyconquest:
                 query = 'delete from dicomimages where ObjectFile="{}"'.format(row['ObjectFile'])
                 self.execute_db_query(query)
 
-
             # delete dicomseries table entry
             query = 'delete from dicomseries where seriesinst="{}"'.format(seriesuid)
             self.execute_db_query(query)
@@ -760,12 +762,14 @@ class pyconquest:
                 self.execute_db_query(query)
                 log.info('no more series : now deleting studiuid entry in db : {}'.format(studyuid))
 
-            query_for_remaining_studies = 'select count(*) as nr from dicomstudies where PatientID="{}"'.format(patientid)
+            query_for_remaining_studies = 'select count(*) as nr from dicomstudies where PatientID="{}"'.format(
+                patientid)
             remaining_studies = self.execute_db_query(query_for_remaining_studies)
             if remaining_studies[0]['nr'] == 0:
                 query = 'delete from dicompatients where PatientID="{}"'.format(patientid)
                 self.execute_db_query(query)
                 log.info('no more studies : now deleting patient db entry with number : {}'.format(patientid))
+
     #
     #   Some utility routines not part of base functionality of conquest, but handy
     #
@@ -931,7 +935,6 @@ class pyconquest:
         # Start listening for incoming association requests
         ae.start_server(('', port), evt_handlers=handlers)
 
-
     def handle_dicom_store_request(self, event):
         """Handle a C-STORE request event. Creates filename and saves the received dicom to this file. Then updates
         the database
@@ -944,7 +947,7 @@ class pyconquest:
         # Add the File Meta Information
         ds.file_meta = event.file_meta
         patientid = ds[0x0010, 0x0020].value
-        log.info('incoming DICOM communication event for patient : '+str(patientid))
+        log.info('incoming DICOM communication event for patient : ' + str(patientid))
 
         filename = "{}/{}/{}.dcm".format(self.data_directory, patientid, ds.SOPInstanceUID)
         path = "{}/{}".format(self.data_directory, patientid)
@@ -957,7 +960,7 @@ class pyconquest:
         log.info('dicom saved to file : ' + filename)
 
         if self.__write_to_database_when_receiving_dicom_data is True:
-            #ds2 = dcmread(filename)
+            # ds2 = dcmread(filename)
             c2 = pyconquest(database_filename=self.database_filename, data_directory=self.data_directory,
                             compute_hash=self.__compute_hash, loglevel='INFO')
             c2.__db_design = self.__db_design
@@ -968,7 +971,8 @@ class pyconquest:
         # Return a 'Success' status
         return 0x0000
 
-    def query_dicom(self, addres='127.0.0.1', port=5678, ae_title='', patientid='', modality='', sending_ae_title=b'PYCONQUEST'):
+    def query_dicom(self, addres='127.0.0.1', port=5678, ae_title='', patientid='', modality='',
+                    sending_ae_title=b'PYCONQUEST'):
         """Queries a dicom server using C-FIND
                 :param: addres : IP addres of dicom server where the query is done to
                 :param: port : portnumber of dicom server where the query is done to
@@ -1031,10 +1035,10 @@ class pyconquest:
         return response_list
 
     def get_dicom(self, addres='127.0.0.1', port=5678, ae_title='',
-                patientid='', modality='', series_uid='', sop_instance_uid='',
-                receiving_ae_title='PYCONQUEST', receiving_ip='', receiving_port_number=5699,
-                requesting_ae_title='PYCONQUEST',
-                association_timeout=60, sending_to_my_own_scp=True, unrestricted_storage=True):
+                  patientid='', modality='', series_uid='', sop_instance_uid='',
+                  receiving_ae_title='PYCONQUEST', receiving_ip='', receiving_port_number=5699,
+                  requesting_ae_title='PYCONQUEST',
+                  association_timeout=60, sending_to_my_own_scp=True, unrestricted_storage=True, force_transfer=False):
 
         """Queries a dicom server using C-MOVE
                 :param: addres : IP addres of dicom server where the query is done to
@@ -1056,6 +1060,7 @@ class pyconquest:
                 :param: sending_to_my_own_scp, if true (default) spin up your own receiving SCP to receive data
                 :param: unrestricted_storage if true : allow all data to be received
 
+                :return: the error code of the c-move command or None if there is no error
                 """
 
         # Test if there is a sensible query, to prevent querying too much which can 'hang' the SCP
@@ -1064,9 +1069,22 @@ class pyconquest:
                       'Query will not be executed')
             return
 
+        # check if object is already in database, return if it is
+        if len(series_uid) > 4 and force_transfer is False:
+            if self.execute_db_query("select * from dicomseries where SeriesInst='{}'".format(series_uid)):
+                log.info("Item with seriesuid:{} already in database, not retreiving it since force_transfer "
+                         "is set to : False".format(series_uid))
+                return
+
+        if len(sop_instance_uid) > 4 and force_transfer is False:
+            if self.execute_db_query("select * from dicomimages where SOPInstanc='{}'".format(sop_instance_uid)):
+                log.info("Item with SOPInstance:{} already in database, not retreiving it since force_transfer "
+                         "is set to : False".format(sop_instance_uid))
+                return
+
         log.info('Starting querying for C-MOVE on SCP server {}/{}/{}'.format(ae_title, addres, port))
 
-        #needed for instance to get RTPLANs from Eclipse into the system
+        # needed for instance to get RTPLANs from Eclipse into the system
         if unrestricted_storage:
             pynetdicom._config.UNRESTRICTED_STORAGE_SERVICE = True
 
@@ -1099,23 +1117,29 @@ class pyconquest:
         assoc.acse_timeout = association_timeout
         assoc.dimse_timeout = association_timeout
         assoc.network_timeout = association_timeout
+        cmove_status_explananation = {0xc003: 'AE to send to is not known by the SCP',
+                                      0xc004: 'Requested item not found by the SCP'}
+        error_code = None
         if assoc.is_established:
-            log.info('Will send C-MOVE request to send from {}/{} to {}'.format(addres, port,
-                                                                                   receiving_ae_title))
+            log.info('Now sending C-MOVE request to send from {}/{} to {}'.format(addres, port,
+                                                                                receiving_ae_title))
             responses = assoc.send_c_move(ds1, receiving_ae_title, PatientRootQueryRetrieveInformationModelMove)
             for (status, identifier) in responses:
                 if status:
                     if status.Status not in [65280, 0]:  # these are normal statusses during transfer or at the end
-                        log.error('C-MOVE query status: 0x{0:04x}'.format(status.Status))
+                        log.error('C-MOVE query status: 0x{0:04x} : {1}'.format(status.Status,
+                                                        cmove_status_explananation.get(status.Status, 'Unknown Error')))
+                        error_code = status.Status
                 else:
                     log.error('Connection timed out, was aborted or received invalid response')
             # Release the association
             assoc.release()
         else:
             log.error('Association rejected, aborted or never connected')
+        log.info('Finishing C-MOVE, now stopping the receiver')
         if sending_to_my_own_scp:
             scp.shutdown()
-        return
+        return error_code
 
     #
     # examine database
@@ -1356,7 +1380,7 @@ class pyconquest:
             )
         where modality in ('RTDOSE','RTPLAN')
         """
-        #self.execute_db_query(query_to_fill_Referenced_for_RTDOSE)
+        # self.execute_db_query(query_to_fill_Referenced_for_RTDOSE)
         log.info('postprocessing of database done')
 
     #

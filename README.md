@@ -213,7 +213,7 @@ response_list = c.query_dicom(patientid='1313131313', addres='10.11.12.133', por
 for response in response_list:
     c.get_dicom(addres='10.11.12.133', port=5678, series_uid=response['SeriesInstanceUID'])
 ```
-####variations:
+#### Variations:
 
 You can change the receiving portnumber by using : receiving_port=12345 in case of port conflicts\
 You can also send to another destination than 'yourself' by defining receiving_ae_title='PACS_C'
@@ -353,14 +353,22 @@ password = pypi-<a very long token you can get from the pypi page under account 
 ```
 
 # CHANGELOG
-### version 0.1.6
 
+### version 0.1.7
+
+- in get_dicom() transfer is skipped (default) if object is already in database
+- improved logging information when sending C_MOVE in get_dicom()
+- get_dicom() now returns the error or NONE if no error is encountered
+- fixed bug where single quotes in contournames lead to insertion error, quote is now removed
+
+### version 0.1.6
 
 - Fixed bug where when receiving data via dicom, the added columns were not filled
 - Added option to read nested tags into the database
 - Added option to define the AE title of the requesting node in get_dicom()
 - load_csv_to_table() can now handle quotes in the data field
-- Added method : read_single_tag() to read a single tag from a single file (returns string)
+- Added method : read_single_tag() to read a single tag from a single file (returns string or a pydicom structure 
+in case of a sequence)
 
 ### version 0.1.5
 
