@@ -3,4 +3,4 @@
 *.csv
 *.db
 *.pyc
-pyconquest.egg-info/
+pyconquest.egg-info/*
