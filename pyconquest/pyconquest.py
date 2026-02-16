@@ -19,6 +19,7 @@ import pickle
 import time
 import csv
 import sys
+import zipfile
 from logging.handlers import RotatingFileHandler
 
 log = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ class pyconquest:
     roi_filter_flags = re.IGNORECASE
     exclude_filter = [r'^Z\d', r'^Ext', 'ISOC', 'QME', 'NP']
     include_filter = ['']
+    last_seriesuid_loaded = ''
 
     def __init__(self, data_directory='data', sql_inifile_name='dicom.sql', database_filename='conquest.db',
                  connect_and_read_sql=True, loglevel='ERROR', compute_hash=False):
@@ -463,15 +465,29 @@ class pyconquest:
         self.database_postprocessing()
         return counter
 
-    def store_dicom_file(self, filename, remove_after_store=False, sopinstance_as_filename=False):
+    def store_dicom_file(self, filename, remove_after_store=False, sopinstance_as_filename=False, force_patientid=None):
         """Places dicom file in proper directory in data directory and updates database
 
         :param: filename : name of the dicom file to be placed in database
         :param: remove_after_store : determines if file is deleted after storing it ( default : FALSE )
         :param: sopinstance_as_filename : if set to True the sopuid will become the new filename ( default : FALSE )
+        :param: force_patientid : if set the patientid is replaced by the given string ( default None )
         """
         try:
             ds = dcmread(filename)
+            
+            # force patientid if not none to value, and add old one to database column
+            # to create the column add below columndefinition and do rebuild_standard_dicom_tables:
+            # -> c.add_column_to_database(tablename='DICOMimages', column_definition=['0x0011', '0x0020', 'OLDMRN']) <-
+            # note ! the column with the old data is only added to the database, not to the file !
+            patientid_is_changed = False
+            if force_patientid is not None:
+                if ds[0x0010, 0x0020].value != force_patientid:
+                    ds.add_new([0x0011, 0x0020], 'LO', ds[0x0010, 0x0020].value ) # write old tag to private tag
+                    log.error('Converting PatientID from {} to {}'.format(ds[0x0010, 0x0020].value, force_patientid))
+                    ds[0x0010, 0x0020].value = force_patientid
+                    patientid_is_changed = True
+
             patientid = ds[0x0010, 0x0020].value
 
             if sopinstance_as_filename:
@@ -489,15 +505,25 @@ class pyconquest:
 
             shutil.copy(filename, target_filename)
             log.info('stored file : {} in database at location: {}'.format(filename, target_filename))
+
+            # actually alter the tag in the file if force patientid is applied
+            if patientid_is_changed:
+                self.change_tag(target_filename, tag='PatientID', new_value=force_patientid, create=False)
+                log.info('changed patientID of  file : {}  to {} '.format(target_filename, force_patientid))
+
             if remove_after_store:
                 os.remove(filename)
                 log.info('removed file : {}'.format(filename))
             self.write_tags(ds, target_filename_db)
 
+            # write last serieuid to class property
+            self.last_seriesuid_loaded = ds[0x0020, 0x000e].value
+
         except Exception as e:
             log.error('Exception encountered in store_dicom_file: ' + str(e))
 
-    def store_dicom_files_from_directory(self, directory_name, remove_after_store=False, sopinstance_as_filename=False):
+    def store_dicom_files_from_directory(self, directory_name, remove_after_store=False, sopinstance_as_filename=False,
+                                         unzip=True, unzipdir='./unpack', force_patientid=None):
         """Scans the directory and runs store_dicom_file on all files. Can handle nested directories
 
         Stores the file in the dicom file tree and updates the sql database with the tags for every file in directory
@@ -506,14 +532,50 @@ class pyconquest:
         :param: directory_name : name of the directory where the files are that should be stored
         :param: remove_after_store : determines if file is deleted after storing it ( default : FALSE )
         :param: sopinstance_as_filename : if set to True the sopuid will become the new filename ( default : FALSE )
+        :param: unzip (default TRUE) unzips a zip file to a temporary location before reading in the data
+        :param: unzipdir : directory to unzip data in, directory should exist otherwise there is an exit
+        :param: force_patientid : if set the patientid is replaced by the given string ( default None )
          """
+
         if os.path.exists(directory_name):
             for root, dirs, files in os.walk(directory_name, topdown=True):
                 for name in files:
                     full_filename = os.path.join(root, name)
                     log.info('Processing ... ' + full_filename)
-                    self.store_dicom_file(full_filename, remove_after_store=remove_after_store,
-                                          sopinstance_as_filename=sopinstance_as_filename)
+
+                    if zipfile.is_zipfile(full_filename) and unzip == True:
+                        print('this is a zipfile')
+                        if not os.path.isdir(unzipdir):
+                            log.error('Unzip directory does not exist, so not doing anything')
+                            exit()
+                        else:
+                            # remove all files
+                            log.info('clearing the unzip directory')
+                            for root2, dirs2, files2 in os.walk(unzipdir):
+                                for f in files2:
+                                    os.unlink(os.path.join(root2, f))
+                                for d in dirs2:
+                                    shutil.rmtree(os.path.join(root2, d))
+
+                            log.info('unzipping file : {} to {}'.format(full_filename, unzipdir))
+                            #unzip zipfile
+                            with zipfile.ZipFile(full_filename, "r") as zip_ref:
+                                zip_ref.extractall(unzipdir)
+
+                            self.store_dicom_files_from_directory(directory_name=unzipdir,unzip=False,
+                                                                  force_patientid=force_patientid)
+
+                            log.info('clearing the unzip directory again')
+                            for root2, dirs2, files2 in os.walk(unzipdir):
+                                for f in files2:
+                                    os.unlink(os.path.join(root2, f))
+                                for d in dirs2:
+                                    shutil.rmtree(os.path.join(root2, d))
+
+                    else:
+                        self.store_dicom_file(full_filename, remove_after_store=remove_after_store,
+                                    sopinstance_as_filename=sopinstance_as_filename, force_patientid=force_patientid)
+                        
             log.info('Processed {} files'.format(len(files)))
             return 1
         else:
@@ -597,7 +659,8 @@ class pyconquest:
                         ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][
                             0x300a, 0x00084].value,  # beam Dose
                         ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][
-                            0x300a, 0x00086].value  # beam MU
+                            0x300a, 0x00086].value,  # beam MU
+                        str(Beam[0x300a, 0x0111][0][0x300a, 0x012c].value) # isocenter_position of CP 0 of beam
                     ])
                     string_with_beamMU += str(
                         ds[0x300a, 0x0070][fractiongroupnumber][0x300c, 0x0004][per_fraction_beamnr][
@@ -644,6 +707,15 @@ class pyconquest:
 
             if self.__compute_hash:
                 returndict['hash'] = hashlib.md5(pickle.dumps(ds.PixelData)).hexdigest()
+
+        elif dicomtype == 'REG':
+            try:
+                # This is the seriesUID of the CT that is part of the REG ( for elekta XVI )
+                returndict['ReferencedSeriesUID'] = ds[0x008, 0x1115][0][0x0020, 0x000e].value
+                # THis is the SerieUID of the CBCT that is part of the REG ( for elekta XVI )
+                returndict['ElementList'] = ds[0x008, 0x1115][1][0x0020, 0x000e].value
+            except:
+                log.error('Error when extracting from REG')
 
         return returndict
 
@@ -910,7 +982,7 @@ class pyconquest:
         # msg = 'Connected with remote (host, port) : {} : {}'.format(event.address, event.assoc.ae.ae_title)
         log.info(msg)
 
-    def start_dicom_listener(self, port=5678, write_to_database=True):
+    def start_dicom_listener(self, port=5678, write_to_database=True, block=True):
         """Starts a listener following the dicom network protocol. Default behaviour is to store the received file in the database
 
         :param: port : portnumber
@@ -933,7 +1005,7 @@ class pyconquest:
         # Support presentation contexts for all storage SOP Classes
         ae.supported_contexts = AllStoragePresentationContexts
         # Start listening for incoming association requests
-        ae.start_server(('', port), evt_handlers=handlers)
+        ae.start_server(('', port), block=block, evt_handlers=handlers)
 
     def handle_dicom_store_request(self, event):
         """Handle a C-STORE request event. Creates filename and saves the received dicom to this file. Then updates
@@ -971,7 +1043,7 @@ class pyconquest:
         # Return a 'Success' status
         return 0x0000
 
-    def query_dicom(self, addres='127.0.0.1', port=5678, ae_title='', patientid='', modality='',
+    def query_dicom(self, addres='127.0.0.1', port=5678, ae_title='', patientid='', modality='', studyuid='', studydate='',
                     sending_ae_title=b'PYCONQUEST'):
         """Queries a dicom server using C-FIND
                 :param: addres : IP addres of dicom server where the query is done to
@@ -979,6 +1051,7 @@ class pyconquest:
                 :param: ae_title : ae title of dicom server where the query is done to
                 :param: patientid : patientid, to query only for this patient
                 :param: modality : modality (RTPLAN,RTSTRUCT etc. ) to query only for specific modality
+                :param: studyuid : study to query (default all study uids)
                 :param: sending_ae_title : ae title of this node ( the requesting node )
 
                 returns a list of dicts of the response
@@ -995,11 +1068,13 @@ class pyconquest:
         ds1.PatientID = str(patientid)
         # adding empty items to the dataset makes that they are returned in the data
         ds1.SOPClassesInStudy = ''
-        ds1.StudyInstanceUID = ''
+        ds1.StudyInstanceUID = studyuid
         ds1.SeriesInstanceUID = ''
         ds1.Modality = modality
-        ds1.StudyDate = ''
+        ds1.StudyDate = studydate
         ds1.StudyTime = ''
+        ds1.SeriesDate = ''
+        ds1.SeriesTime = ''
         ds1.SeriesDescription = ''
         ds1.StudyDescription = ''
         ds1.PatientBirthDate = ''
@@ -1118,7 +1193,8 @@ class pyconquest:
         assoc.dimse_timeout = association_timeout
         assoc.network_timeout = association_timeout
         cmove_status_explananation = {0xc003: 'AE to send to is not known by the SCP',
-                                      0xc004: 'Requested item not found by the SCP'}
+                                      0xc004: 'Requested item not found by the SCP',
+                                      0xc005: 'No connection between SCP and receiver (port or ip wrong ?)'}
         error_code = None
         if assoc.is_established:
             log.info('Now sending C-MOVE request to send from {}/{} to {}'.format(addres, port,
@@ -1136,6 +1212,7 @@ class pyconquest:
             assoc.release()
         else:
             log.error('Association rejected, aborted or never connected')
+            error_code = 'ERROR : No DICOM connection could be established with {}'.format(ae_title)
         log.info('Finishing C-MOVE, now stopping the receiver')
         if sending_to_my_own_scp:
             scp.shutdown()
@@ -1183,7 +1260,8 @@ class pyconquest:
 
     # some utility functions that are handy to have in the base class
 
-    def dump_data_to_csv(self, query=None, table='dicomseries', filename_dict=None, filename='query_dump.csv'):
+    def dump_data_to_csv(self, query=None, table='dicomseries', filename_dict=None, filename='query_dump.csv',
+                         delimiter=','):
         """
         Dump database tables to csv
 
@@ -1193,18 +1271,21 @@ class pyconquest:
         :param table: a tablename or list of tablenames to dump to file : default : dicomseries
         :param filename_dict: a dict to define for each table/view a filename, default : None
         :param filename: a string defining the filename when using the query mode : default : 'query_dump.csv'
+        :param delimiter: delimeter to use when generating csv file
         :return None:
         """
         if isinstance(table, list):
             for t in table:
-                self.dump_data_to_csv(table=t, filename_dict=filename_dict)
+                self.dump_data_to_csv(table=t, filename_dict=filename_dict, delimiter=delimiter)
             return
 
         if query is None:
             query = 'select * from {}'.format(table)
             csv_filename = '{}.csv'.format(table)
-            if table in filename_dict:
-                csv_filename = '{}.csv'.format(filename_dict[table])
+            if filename_dict is not None:
+                if table in filename_dict:
+                    csv_filename = '{}.csv'.format(filename_dict[table])
+                    print(csv_filename)
         else:
             csv_filename = filename
             table = 'dedicated query'
@@ -1214,7 +1295,7 @@ class pyconquest:
         if len(result) > 0:
             keys = result[0].keys()
             with open(csv_filename, 'w', newline='') as output_file:
-                dict_writer = csv.DictWriter(output_file, keys)
+                dict_writer = csv.DictWriter(output_file, keys, delimiter=delimiter)
                 dict_writer.writeheader()
                 dict_writer.writerows(result)
             log.info('wrote {} to {}'.format(table, csv_filename))
