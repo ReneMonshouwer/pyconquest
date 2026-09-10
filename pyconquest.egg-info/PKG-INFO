@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: pyconquest
-Version: 0.1.8
+Version: 0.1.9
 Summary: Python code which partly mimics the conquest pacs
 Home-page: https://github.com/ReneMonshouwer/pyconquest
 Author: René Monshouwer
@@ -257,7 +257,14 @@ c.get_dicom(addres='10.11.12.133', port=5678, receiving_aetitle='PACS_C', series
 from pyconquest import pyconquest
 
 c.copy_dicom_files_to_dest(seriesuid='1.2...8024597.12',destination='out', UseSubDirectories=True)
-c.copy_dicom_files_to_dest(seriesuid=['1.2.84..97.12','2.16.840....33'],destination='data2')
+
+# if only one seriesuid is copied, a list of filenames is returned and can be used
+list = c.copy_dicom_files_to_dest(seriesuid='1.2...8024597.12' ,destination='out')
+for fn in list:
+  c.change_tag(fn, tag='PatientBirthDate', new_value='19000101')
+
+# also works with a list of seriesuids, but then no list of filenames is returned
+c.copy_dicom_files_to_dest(seriesuid=['1.2.84..97.12','2.16.840....33',...],destination='data2')
 ```
 
 #### Or by query (query should return seriesinst)
@@ -282,6 +289,8 @@ from pyconquest import pyconquest
 c=pyconquest()
 # single tag of single file
 c.change_tag('test.dcm', tag='PatientBirthDate', new_value='19000101')
+# with tuple instead of name of tag
+c.change_tag(filename=new_filename, tag=('0x3006', '0x0002'), new_value='StructureSet')
 
 # all tags from a list of filenames
 c.change_all_tags(filename=['test.dcm', 'test.dcm'], new_value='19000102')
@@ -380,6 +389,14 @@ password = pypi-<a very long token you can get from the pypi page under account 
 ```
 
 # CHANGELOG
+
+### version 0.1.9
+
+- Added option seriesuid to method **query_dicom()**
+- Method : **copy_dicom_files()** now returns a list of all copied files
+- Added method **calculate_robust_hash(seriesuid)**, to calculate a more robust hash for RTSTRUCT
+- bugfix : **change_roinames** can now handle empty contours
+
 
 ### version 0.1.8
 

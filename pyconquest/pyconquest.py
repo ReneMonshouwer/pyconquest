@@ -719,6 +719,45 @@ class pyconquest:
 
         return returndict
 
+    def calculate_robust_hash(self,  seriesuid=''):
+        """" compute a more robust hash for rtstructs
+        puts all contour data in one string and makes hash, then combines all hashes and hashes again
+
+        :param filename: filename to read from
+        :param seriesuid : seriesuid of rtstruct
+        :returns : tag value as a string
+         """
+        file_query = "select ObjectFile,ImagePat from dicomimages where seriesinst=\"{}\"".format(seriesuid)
+        #file_query = "select ObjectFile,seriesinst from dicomimages where Modality='RTSTRUCT'".format(seriesuid)
+        return_list = self.execute_db_query(file_query)
+        if len(return_list) == 0:
+            log.error('No item found with this seriesuid to calculate hash from '.format(seriesuid))
+            return
+
+        filename = "{}/{}".format(self.data_directory, return_list[0]['ObjectFile'])
+        ds = dcmread(filename)
+        dicomtype = ds[0x0008, 0x0060].value
+        if dicomtype == 'RTSTRUCT':
+            log.info('Calculating robust rtstruct hash from file : {}'.format(filename))
+            cumulative_contour_string = ''
+            contours = ds[0x3006, 0x0039].value
+            for c in contours:
+                cs = ''
+                if (0x3006, 0x0040) in c:
+                    for seq in c[0x3006, 0x0040].value:
+                        cs = cs + str(seq[0x3006, 0x0050].value)
+                cumulative_contour_string = cumulative_contour_string + hashlib.md5(cs.encode('utf-8')).hexdigest()
+
+            retval = hashlib.md5(cumulative_contour_string.encode('utf-8')).hexdigest()
+            log.info('Computed hash : {}, now updating DICOMimages table'.format(retval))
+            update_query="update dicomimages set hash='{}' where seriesinst='{}'".format(retval,seriesuid)
+            self.execute_db_query(update_query)
+
+        else:
+            log.error('wrong dicom type')
+            retval=''
+        return retval
+
     def read_single_tag(self, filename='', tag=None):
         """" simple functionality to read a single tag from a dicom file
 
@@ -881,11 +920,13 @@ class pyconquest:
                 os.makedirs(destination)
                 log.info("Directory " + destination + " Created ")
 
+        list_of_filenames = []
         if not UseSubDirectories:
             for row in return_list:
                 filename = "{}/{}".format(self.data_directory, row['ObjectFile'])
                 log.info('copying ' + filename + ' to dest : ' + destination)
                 shutil.copy(filename, destination)
+                list_of_filenames.append(destination+'/'+os.path.basename(row['ObjectFile']))
         else:
             for row in return_list:
                 filename = "{}/{}".format(self.data_directory, row['ObjectFile'])
@@ -895,7 +936,7 @@ class pyconquest:
                     log.info("Directory " + destination_patientdir + " Created ")
                 log.info('copying ' + filename + ' to dest : ' + destination_patientdir)
                 shutil.copy(filename, destination_patientdir)
-        return 1
+        return list_of_filenames
 
     #
     #   Below is the dicom communication part using pynetdicom
@@ -1044,7 +1085,7 @@ class pyconquest:
         return 0x0000
 
     def query_dicom(self, addres='127.0.0.1', port=5678, ae_title='', patientid='', modality='', studyuid='', studydate='',
-                    sending_ae_title=b'PYCONQUEST'):
+                    seriesuid='', sending_ae_title=b'PYCONQUEST'):
         """Queries a dicom server using C-FIND
                 :param: addres : IP addres of dicom server where the query is done to
                 :param: port : portnumber of dicom server where the query is done to
@@ -1052,6 +1093,7 @@ class pyconquest:
                 :param: patientid : patientid, to query only for this patient
                 :param: modality : modality (RTPLAN,RTSTRUCT etc. ) to query only for specific modality
                 :param: studyuid : study to query (default all study uids)
+                :param: seriesuid : series to query (default all study uids)
                 :param: sending_ae_title : ae title of this node ( the requesting node )
 
                 returns a list of dicts of the response
@@ -1069,7 +1111,7 @@ class pyconquest:
         # adding empty items to the dataset makes that they are returned in the data
         ds1.SOPClassesInStudy = ''
         ds1.StudyInstanceUID = studyuid
-        ds1.SeriesInstanceUID = ''
+        ds1.SeriesInstanceUID = seriesuid
         ds1.Modality = modality
         ds1.StudyDate = studydate
         ds1.StudyTime = ''
@@ -1599,8 +1641,13 @@ class pyconquest:
                     log.info('Modus {} : will delete indices {}'.format(mode, contourindices_to_delete))
                     shift = 0  # during the deletion the indices are shifting downwards
                     for i in contourindices_to_delete:
-                        roitype = ds[0x3006, 0x0039][i - shift][0x3006, 0x0040][0][0x3006, 0x0042].value
-                        roiname = ds[0x3006, 0x0020][i - shift][0x3006, 0x0026].value
+                        #to catch situation where structure is empty
+                        try:
+                            roitype = ds[0x3006, 0x0039][i - shift][0x3006, 0x0040][0][0x3006, 0x0042].value
+                            roiname = ds[0x3006, 0x0020][i - shift][0x3006, 0x0026].value
+                        except:
+                            roitype='>could not extract roitype, maybe it is empty<'
+                            roiname='>could not extract roiname, maybe it is empty<'
                         if not ((str(roitype) == 'POINT' and delete_points == False) and mode == 'leave'):
                             log.info('deleting: {} of type {}'.format(roiname, str(roitype)))
                             del ds[0x3006, 0x0020].value[i - shift]
