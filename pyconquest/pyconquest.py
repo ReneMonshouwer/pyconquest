@@ -22,16 +22,44 @@ import sys
 import zipfile
 from logging.handlers import RotatingFileHandler
 
+#
+# define logging with colors for stderr, uses separate class for this
+#
+class CustomFormatter(logging.Formatter):
+
+    grey = "\x1b[38;20m"
+    yellow = "\x1b[33;20m"
+    red = "\x1b[31;20m"
+    bold_red = "\x1b[31;1m"
+    reset = "\x1b[0m"
+    format = "%(levelname)-5s %(asctime)s [%(filename)-15s:%(lineno)-4s][%(funcName)-30s]\t%(message)s"
+
+    FORMATS = {
+        logging.DEBUG: grey + format + reset,
+        logging.INFO: yellow + format + reset,
+        logging.WARNING: yellow + format + reset,
+        logging.ERROR: red + format + reset,
+        logging.CRITICAL: bold_red + format + reset
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
+
+
 log = logging.getLogger(__name__)
-LOGFORMAT = "%(levelname)-5s %(asctime)s [%(filename)-15s:%(lineno)-4s][%(funcName)-30s]\t%(message)s"
+FILE_LOGFORMAT = "%(levelname)-5s %(asctime)s [%(filename)-15s:%(lineno)-4s][%(funcName)-30s]\t%(message)s"
 log.setLevel(logging.ERROR)
 
+# logging to stderr with colours
 ch = logging.StreamHandler(sys.stderr)
-ch.setFormatter(logging.Formatter(LOGFORMAT))
+ch.setFormatter(CustomFormatter())
 log.addHandler(ch)
 
+# file logging, only ERRORs are logged
 fh = RotatingFileHandler("pyconquest_error.log", maxBytes=(100000), backupCount=1)
-fh.setFormatter(logging.Formatter(LOGFORMAT))
+fh.setFormatter(logging.Formatter(FILE_LOGFORMAT))
 fh.setLevel(logging.ERROR)
 log.addHandler(fh)
 
@@ -278,7 +306,7 @@ class pyconquest:
         ; this conforms to the original conquest style"""
         for key, val in Dict.items():
             if str(val).startswith("[") is True and key not in self.__extra_imagetable_columns:
-                val = str(val).replace('[', '').replace(']', '').replace(',', "\\")
+                val = str(val).replace('[', '').replace(']', '').replace(',', "\\").strip()
                 Dict[key] = val
         return Dict
 
@@ -484,7 +512,7 @@ class pyconquest:
             if force_patientid is not None:
                 if ds[0x0010, 0x0020].value != force_patientid:
                     ds.add_new([0x0011, 0x0020], 'LO', ds[0x0010, 0x0020].value ) # write old tag to private tag
-                    log.error('Converting PatientID from {} to {}'.format(ds[0x0010, 0x0020].value, force_patientid))
+                    log.info('Converting PatientID from {} to {}'.format(ds[0x0010, 0x0020].value, force_patientid))
                     ds[0x0010, 0x0020].value = force_patientid
                     patientid_is_changed = True
 
@@ -798,16 +826,21 @@ class pyconquest:
     def __change_ReferencedSOPInstanceUID(self, ds, element):
         if element.keyword == 'ReferencedSOPInstanceUID':
             ds.ReferencedSOPInstanceUID = ''
-
-    def delete_series(self, seriesuid='', query=None, delete_files=False, mrn=None):
+            
+    def delete_series(self, seriesuid='', query=None, delete_files=False, delete_only_files=False, mrn=None):
         """Deletes a single or multiple series from the disk and from the database
 
         :param: seriesuid : a single string (one seriesuid) or a list of seriesuids of series that should be deleted
         :param: query : a query that should return SeriesInst with the series to delete
         :param: delete_files : if set to True, the files are physically removed from disk (deleted), default=False
         :param: mrn : delete for the given mrn in a fast manner, so only all the database entries with a direct query
+        :param : delete_only_files : if set to True, only files are deleted, not the db entries
         :returns: nothing
         """
+        
+        if delete_only_files:
+            delete_files=True
+            
         if mrn is not None:
             if delete_files == True:
                 log.error('Cannot delete on mrn and physically delete the files')
@@ -825,12 +858,12 @@ class pyconquest:
             log.info('deleting series following query: {}'.format(query))
             result = self.execute_db_query(query)
             serieslist = [d['SeriesInst'] for d in result]
-            self.delete_series(seriesuid=serieslist, delete_files=delete_files)
+            self.delete_series(seriesuid=serieslist, delete_files=delete_files, delete_only_files=delete_only_files)
             return ()
 
         if isinstance(seriesuid, list):  # recursive call in case of list as input
             for suid in seriesuid:
-                self.delete_series(seriesuid=suid, delete_files=delete_files)
+                self.delete_series(seriesuid=suid, delete_files=delete_files, delete_only_files=delete_only_files)
             return ()
 
         # single seriesuid given
@@ -858,28 +891,31 @@ class pyconquest:
                     log.error("The file you want to delete does not exist")
 
                 # delete dicomimage table entry
-                query = 'delete from dicomimages where ObjectFile="{}"'.format(row['ObjectFile'])
+                if not delete_only_files:
+                    query = 'delete from dicomimages where ObjectFile="{}"'.format(row['ObjectFile'])
+                    self.execute_db_query(query)
+
+            if not delete_only_files:
+                # delete dicomseries table entry
+                query = 'delete from dicomseries where seriesinst="{}"'.format(seriesuid)
                 self.execute_db_query(query)
 
-            # delete dicomseries table entry
-            query = 'delete from dicomseries where seriesinst="{}"'.format(seriesuid)
-            self.execute_db_query(query)
+                # now delete the study entry in db if this is the last ...
+                query_for_remaining_series = 'select count(*) as nr from dicomseries where studyinsta="{}"'.format(studyuid)
+                remaining_series = self.execute_db_query(query_for_remaining_series)
+                if remaining_series[0]['nr'] == 0:
+                    query = 'delete from dicomstudies where StudyInsta="{}"'.format(studyuid)
+                    self.execute_db_query(query)
+                    log.info('no more series : now deleting studiuid entry in db : {}'.format(studyuid))
 
-            # now delete the study entry in db if this is the last ...
-            query_for_remaining_series = 'select count(*) as nr from dicomseries where studyinsta="{}"'.format(studyuid)
-            remaining_series = self.execute_db_query(query_for_remaining_series)
-            if remaining_series[0]['nr'] == 0:
-                query = 'delete from dicomstudies where StudyInsta="{}"'.format(studyuid)
-                self.execute_db_query(query)
-                log.info('no more series : now deleting studiuid entry in db : {}'.format(studyuid))
+                query_for_remaining_studies = 'select count(*) as nr from dicomstudies where PatientID="{}"'.format(
+                    patientid)
+                remaining_studies = self.execute_db_query(query_for_remaining_studies)
+                if remaining_studies[0]['nr'] == 0:
+                    query = 'delete from dicompatients where PatientID="{}"'.format(patientid)
+                    self.execute_db_query(query)
+                    log.info('no more studies : now deleting patient db entry with number : {}'.format(patientid))
 
-            query_for_remaining_studies = 'select count(*) as nr from dicomstudies where PatientID="{}"'.format(
-                patientid)
-            remaining_studies = self.execute_db_query(query_for_remaining_studies)
-            if remaining_studies[0]['nr'] == 0:
-                query = 'delete from dicompatients where PatientID="{}"'.format(patientid)
-                self.execute_db_query(query)
-                log.info('no more studies : now deleting patient db entry with number : {}'.format(patientid))
 
     #
     #   Some utility routines not part of base functionality of conquest, but handy
