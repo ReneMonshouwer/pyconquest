@@ -373,7 +373,12 @@ password = pypi-<a very long token you can get from the pypi page under account 
 
 # CHANGELOG
 
-### version 0.1.10
+### version 0.1.12
+
+- Fixed bug that occurs when a contour name in rtstruct contatains a double quote
+
+
+### version 0.1.11
 
 - Added option 'delete_only_files' to method **delete_series()** (default False) which only deletes the files, not the database entries
 - strip trailing and leading spaces in method :  **__convert_listvalues_to_conquest_style()**

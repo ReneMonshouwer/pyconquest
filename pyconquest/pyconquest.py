@@ -624,7 +624,7 @@ class pyconquest:
             contournamelist = []
             FrameOfReferenceUID_List = []
             for c in contours:
-                contournamelist.append(str(c[0x3006, 0x0026].value).replace("'", ''))
+                contournamelist.append(str(c[0x3006, 0x0026].value).replace("'", '').replace("\"", ""))
                 FrameOfReferenceUID_List.append(c[0x3006, 0x0024].value)
             unique_frame_of_ref = list(set(FrameOfReferenceUID_List))
             returndict['ElementList'] = contournamelist
